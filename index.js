@@ -1,4 +1,3 @@
-// index.js (continued)
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
@@ -8,6 +7,8 @@ const tournamentRoutes = require('./routes/tournamentRoutes');
 const userRoutes = require('./routes/userRoutes');
 const walletRoutes = require('./routes/walletRoutes');
 const contactRoutes = require('./routes/contactRoutes');
+const verificationRoutes = require('./routes/verificationRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 require('dotenv').config();
 
 const app = express();
@@ -31,6 +32,8 @@ app.use('/api/tournaments', tournamentRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/contact', contactRoutes);
+app.use('/api/users/verification', verificationRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Basic route
 app.get('/', (req, res) => {
