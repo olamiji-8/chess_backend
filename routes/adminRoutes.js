@@ -4,12 +4,12 @@ const {
   getAllVerificationRequests, 
   updateVerificationStatus 
 } = require('../controllers/verificationController');
-const { protect, admin } = require('../middleware/authMiddleware');
+const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 router.route('/verifications')
-  .get(protect, admin, getAllVerificationRequests);
+  .get(protect, adminOnly, getAllVerificationRequests);
 
 router.route('/verifications/:id')
-  .put(protect, admin, updateVerificationStatus);
+  .put(protect, adminOnly, updateVerificationStatus);
 
 module.exports = router;

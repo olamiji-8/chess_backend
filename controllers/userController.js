@@ -1,83 +1,121 @@
 const User = require('../models/User');
-const Transaction = require('../models/Transaction');
 const asyncHandler = require('express-async-handler');
-const jwt = require('jsonwebtoken');
 const axios = require('axios');
-const cloudinary = require('../config/cloudinary');
-const fs = require('fs');
 
-// @desc    Register user
-// @route   POST /api/users/register
-// @access  Public
-exports.registerUser = asyncHandler(async (req, res) => {
-  const { fullName, email, password } = req.body;
-  
-  // Check if user exists
-  const userExists = await User.findOne({ email });
-  if (userExists) {
-    return res.status(400).json({ message: 'User with this email already exists' });
-  }
-  
-  // Create user
-  const user = await User.create({
-    fullName,
-    email,
-    password
-  });
-  
-  // Generate token
-  const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
-    expiresIn: '30d'
-  });
-  
-  res.status(201).json({
-    success: true,
-    token,
-    user: {
-      id: user._id,
-      fullName: user.fullName,
-      email: user.email,
-      isVerified: user.isVerified,
-      walletBalance: user.walletBalance,
-      profilePic: user.profilePic
-    }
-  });
-});
 
-// @desc    Login user
-// @route   POST /api/users/login
+// @desc    Get Lichess OAuth login URL
+// @route   GET /api/users/lichess-login
 // @access  Public
-exports.loginUser = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
+exports.getLichessLoginUrl = asyncHandler(async (req, res) => {
+  const state = Math.random().toString(36).substring(2, 15);
   
-  // Check if user exists
-  const user = await User.findOne({ email }).select('+password');
-  if (!user) {
-    return res.status(401).json({ message: 'Invalid credentials' });
-  }
+  // Store state in session to verify on callback
+  req.session.lichessState = state;
   
-  // Check if password matches
-  const isMatch = await user.matchPassword(password);
-  if (!isMatch) {
-    return res.status(401).json({ message: 'Invalid credentials' });
-  }
-  
-  // Generate token
-  const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
-    expiresIn: '30d'
-  });
+  const authUrl = `${LICHESS_AUTH_URL}?response_type=code&client_id=${LICHESS_CLIENT_ID}&redirect_uri=${LICHESS_REDIRECT_URI}&state=${state}&scope=email:read`;
   
   res.status(200).json({
     success: true,
-    token,
-    user: {
-      id: user._id,
-      fullName: user.fullName,
-      email: user.email,
-      isVerified: user.isVerified,
-      walletBalance: user.walletBalance,
-      profilePic: user.profilePic
+    authUrl
+  });
+});
+
+// @desc    Handle Lichess OAuth callback
+// @route   GET /api/users/lichess-callback
+// @access  Public
+exports.handleLichessCallback = asyncHandler(async (req, res) => {
+  const { code, state } = req.query;
+  
+  // Verify state to prevent CSRF attacks
+  if (state !== req.session.lichessState) {
+    return res.status(400).json({ message: 'Invalid state parameter' });
+  }
+  
+  try {
+    // Exchange code for access token
+    const tokenResponse = await axios.post(LICHESS_TOKEN_URL, 
+      `grant_type=authorization_code&code=${code}&redirect_uri=${LICHESS_REDIRECT_URI}&client_id=${LICHESS_CLIENT_ID}&client_secret=${LICHESS_CLIENT_SECRET}`,
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      }
+    );
+    
+    const accessToken = tokenResponse.data.access_token;
+    
+    // Get user info from Lichess
+    const userResponse = await axios.get(`${LICHESS_API_URL}/account`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    
+    const lichessUser = userResponse.data;
+    
+    // Get user email
+    const emailResponse = await axios.get(`${LICHESS_API_URL}/account/email`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    
+    const email = emailResponse.data.email;
+    
+    // Check if user exists in our database
+    let user = await User.findOne({ email });
+    
+    if (!user) {
+      // Create new user if not exists
+      user = await User.create({
+        fullName: lichessUser.username,
+        email,
+        password: Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15),
+        lichessUsername: lichessUser.username,
+        isVerified: true, // We can consider them verified since they have a Lichess account
+        profilePic: lichessUser.profile?.picture || 'default-profile.jpg'
+      });
+    } else {
+      // Update existing user with Lichess info
+      user.lichessUsername = lichessUser.username;
+      user.isVerified = true;
+      
+      if (lichessUser.profile?.picture) {
+        user.profilePic = lichessUser.profile.picture;
+      }
+      
+      await user.save();
     }
+    
+    // Store user info in session
+    req.session.userId = user._id;
+    req.session.isLoggedIn = true;
+    
+    // Store lichess access token for future API calls
+    req.session.lichessAccessToken = accessToken;
+    
+    // Redirect to frontend
+    res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
+    
+  } catch (error) {
+    console.error('Lichess OAuth Error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Error authenticating with Lichess'
+    });
+  }
+});
+
+// @desc    Logout user
+// @route   GET /api/users/logout
+// @access  Public
+exports.logoutUser = asyncHandler(async (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      return res.status(500).json({ message: 'Could not log out, please try again' });
+    }
+    res.clearCookie('connect.sid'); // Clear the session cookie
+    res.status(200).json({ success: true, message: 'Logged out successfully' });
   });
 });
 
@@ -85,7 +123,7 @@ exports.loginUser = asyncHandler(async (req, res) => {
 // @route   GET /api/users/profile
 // @access  Private
 exports.getUserProfile = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user.id)
+  const user = await User.findById(req.session.userId)
     .populate('registeredTournaments', 'title startDate status')
     .populate('createdTournaments', 'title startDate status');
   
@@ -108,67 +146,5 @@ exports.getUserProfile = asyncHandler(async (req, res) => {
       registeredTournaments: user.registeredTournaments,
       createdTournaments: user.createdTournaments
     }
-  });
-});
-
-// @desc    Update user profile
-// @route   PUT /api/users/profile
-// @access  Private
-exports.updateUserProfile = asyncHandler(async (req, res) => {
-  const { fullName, phoneNumber, lichessUsername, bankDetails } = req.body;
-  
-  let updateData = {
-    fullName,
-    phoneNumber,
-    lichessUsername,
-    bankDetails
-  };
-  
-  // Upload profile pic if provided
-  if (req.file) {
-    const result = await cloudinary.uploader.upload(req.file.path, {
-      folder: 'profile_pics'
-    });
-    updateData.profilePic = result.secure_url;
-    // Delete file from server after upload
-    fs.unlinkSync(req.file.path);
-  }
-  
-  const user = await User.findByIdAndUpdate(req.user.id, updateData, {
-    new: true,
-    runValidators: true
-  });
-  
-  res.status(200).json({
-    success: true,
-    data: {
-      id: user._id,
-      fullName: user.fullName,
-      email: user.email,
-      profilePic: user.profilePic,
-      phoneNumber: user.phoneNumber,
-      lichessUsername: user.lichessUsername,
-      isVerified: user.isVerified,
-      walletBalance: user.walletBalance,
-      bankDetails: user.bankDetails
-    }
-  });
-});
-
-// @desc    Verify user identity
-// @route   POST /api/users/verify
-// @access  Private
-exports.verifyUser = asyncHandler(async (req, res) => {
-  // This would typically involve checking ID documents
-  // For simplicity, we'll just mark the user as verified
-  const user = await User.findByIdAndUpdate(req.user.id, 
-    { isVerified: true },
-    { new: true }
-  );
-  
-  res.status(200).json({
-    success: true,
-    message: 'User verified successfully',
-    isVerified: user.isVerified
   });
 });

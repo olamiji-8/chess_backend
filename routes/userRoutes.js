@@ -3,17 +3,25 @@ const router = express.Router();
 const { 
   registerUser, 
   loginUser, 
+  logoutUser,
   getUserProfile, 
   updateUserProfile,
-  verifyUser
+  verifyUser,
+  getLichessLoginUrl,
+  handleLichessCallback
 } = require('../controllers/userController');
 const { protect } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
 
-router.post('/register', registerUser);
-router.post('/login', loginUser);
+// router.post('/register', registerUser);
+// router.post('/login', loginUser);
+router.get('/logout', logoutUser);
 router.get('/profile', protect, getUserProfile);
-router.put('/profile', protect, upload.single('profilePic'), updateUserProfile);
-router.post('/verify', protect, verifyUser);
+// router.put('/profile', protect, upload.single('profilePic'), updateUserProfile);
+// router.post('/verify', protect, verifyUser);
+
+// Add new Lichess OAuth routes
+router.get('/lichess-login', getLichessLoginUrl);
+router.get('/lichess-callback', handleLichessCallback);
 
 module.exports = router;
