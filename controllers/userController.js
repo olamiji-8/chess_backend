@@ -3,6 +3,14 @@ const asyncHandler = require('express-async-handler');
 const axios = require('axios');
 
 
+const LICHESS_AUTH_URL = process.env.LICHESS_AUTH_URL;
+const LICHESS_TOKEN_URL = process.env.LICHESS_TOKEN_URL;
+const LICHESS_API_URL = process.env.LICHESS_API_URL;
+const LICHESS_CLIENT_ID = process.env.LICHESS_CLIENT_ID;
+const LICHESS_CLIENT_SECRET = process.env.LICHESS_CLIENT_SECRET;
+const LICHESS_REDIRECT_URI = process.env.LICHESS_REDIRECT_URI;
+
+
 // @desc    Get Lichess OAuth login URL
 // @route   GET /api/users/lichess-login
 // @access  Public
