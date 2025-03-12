@@ -1,4 +1,3 @@
-// api/index.js
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
@@ -6,6 +5,7 @@ const path = require('path');
 const multer = require('multer');
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
+const passport = require('passport');
 const dbconnect = require('./config/dbconnect');
 const tournamentRoutes = require('./routes/tournamentRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -48,6 +48,13 @@ app.use(session({
     maxAge: 14 * 24 * 60 * 60 * 1000
   }
 }));
+
+// Initialize Passport (must be after session setup)
+app.use(passport.initialize());
+app.use(passport.session());
+
+// Import controller with Passport configuration - must be after initializing passport
+require('./controllers/userController');
 
 // Configure multer for file uploads to /tmp directory (writable in Vercel)
 const storage = multer.diskStorage({
@@ -95,14 +102,21 @@ app.use('/api/admin', adminRoutes);
 
 // Basic route
 app.get('/', (req, res) => {
-  res.json({ message: 'Welcome to Chess Tournament API' });
+  res.json({ 
+    message: 'Welcome to Chess Tournament API',
+    lichessAuth: {
+      enabled: true,
+      loginEndpoint: '/api/users/lichess-login'
+    }
+  });
 });
 
-// Session status route
+// Session status route with additional Lichess info
 app.get('/api/session-status', (req, res) => {
   res.json({
     isLoggedIn: !!req.session.isLoggedIn,
     userId: req.session.userId || null,
+    hasLichessToken: !!req.session.lichessAccessToken,
     sessionID: req.sessionID
   });
 });
