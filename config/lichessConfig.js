@@ -3,7 +3,7 @@ const crypto = require('crypto');
 exports.getLichessClientId = () => {
   // Use environment variable if available
   if (process.env.LICHESS_CLIENT_ID) {
-    return process.env.LICHESS_CLIENT_ID;
+    return getLichessClientId()
   }
   
   // For development: Generate a consistent client ID based on your app name

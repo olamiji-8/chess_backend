@@ -28,10 +28,16 @@ const UserSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  lichessUsername: {
-    type: String,
-    trim: true
-  },
+lichessUsername: {
+  type: String,
+  trim: true,
+  sparse: true, 
+  index: true
+},
+lichessAccessToken: {
+  type: String,
+  select: false // hide in queries unless needed
+},
   isVerified: {
     type: Boolean,
     default: false

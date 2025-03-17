@@ -7,13 +7,8 @@ const session = require('express-session');
 const MongoStore = require('connect-mongo');
 const passport = require('passport');
 const dbconnect = require('./config/dbconnect');
-const tournamentRoutes = require('./routes/tournamentRoutes');
-const userRoutes = require('./routes/userRoutes');
-const walletRoutes = require('./routes/walletRoutes');
-const contactRoutes = require('./routes/contactRoutes');
-const verificationRoutes = require('./routes/verificationRoutes');
-const adminRoutes = require('./routes/adminRoutes');
 require('dotenv').config();
+require('./config/passport');
 
 // Initialize Express
 const app = express();
@@ -36,7 +31,7 @@ if (process.env.NODE_ENV === 'development') {
 app.use(session({
   secret: process.env.SESSION_SECRET || 'chess-tournament-secret-key',
   resave: false,
-  saveUninitialized: false,
+  saveUninitialized: true, // Changed to true to ensure session is created for auth
   store: MongoStore.create({ 
     mongoUrl: process.env.MONGODB_URL,
     collectionName: 'sessions',
@@ -45,7 +40,8 @@ app.use(session({
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
-    maxAge: 14 * 24 * 60 * 60 * 1000
+    maxAge: 14 * 24 * 60 * 60 * 1000,
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax' // Important for cross-site cookies
   }
 }));
 
@@ -53,8 +49,31 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Import controller with Passport configuration - must be after initializing passport
-require('./controllers/userController');
+// Configure Passport - MOVE THIS TO A SEPARATE FILE
+// First import the user model
+const User = require('./models/User');
+
+// Serialize and deserialize user
+passport.serializeUser((user, done) => {
+  done(null, user._id);
+});
+
+passport.deserializeUser(async (id, done) => {
+  try {
+    const user = await User.findById(id);
+    done(null, user);
+  } catch (err) {
+    done(err);
+  }
+});
+
+// Now import routes that use passport
+const tournamentRoutes = require('./routes/tournamentRoutes');
+const userRoutes = require('./routes/userRoutes');
+const walletRoutes = require('./routes/walletRoutes');
+const contactRoutes = require('./routes/contactRoutes');
+const verificationRoutes = require('./routes/verificationRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 
 // Configure multer for file uploads to /tmp directory (writable in Vercel)
 const storage = multer.diskStorage({
@@ -78,20 +97,6 @@ const upload = multer({ storage: storage });
 // Serve files from /tmp/uploads
 app.use('/uploads', express.static(path.join('/tmp', 'uploads')));
 
-// Example file upload route
-app.post('/api/upload', upload.single('file'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded' });
-  }
-  
-  // Return the URL to the uploaded file
-  const fileUrl = `/uploads/${req.file.filename}`;
-  res.json({ 
-    success: true, 
-    file: fileUrl
-  });
-});
-
 // Routes
 app.use('/api/tournaments', tournamentRoutes);
 app.use('/api/users', userRoutes);
@@ -99,6 +104,16 @@ app.use('/api/wallet', walletRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/users/verification', verificationRoutes);
 app.use('/api/admin', adminRoutes);
+
+// Debug endpoint for sessions
+app.get('/api/debug/session', (req, res) => {
+  res.json({
+    sessionID: req.sessionID,
+    session: req.session,
+    isAuthenticated: req.isAuthenticated(),
+    user: req.user
+  });
+});
 
 // Basic route
 app.get('/', (req, res) => {
@@ -117,7 +132,8 @@ app.get('/api/session-status', (req, res) => {
     isLoggedIn: !!req.session.isLoggedIn,
     userId: req.session.userId || null,
     hasLichessToken: !!req.session.lichessAccessToken,
-    sessionID: req.sessionID
+    sessionID: req.sessionID,
+    user: req.user || null
   });
 });
 
