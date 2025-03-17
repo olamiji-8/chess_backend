@@ -13,12 +13,14 @@ const upload = require('../middleware/uploadMiddleware');
 
 // Public routes
 router.get('/', getTournaments);
+router.get('/wallet-balance', protect, getWalletBalance);
 router.get('/:id', getTournament);
 
 // Protected routes
 router.post('/', protect, upload.single('banner'), createTournament);
 router.post('/:id/register', protect, registerForTournament);
-router.get('/wallet-balance', protect, getWalletBalance);
+
+router.get('/:id', getTournament);
 router.put('/:id/status', protect, updateTournamentStatus);
 
 module.exports = router;

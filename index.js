@@ -121,7 +121,7 @@ app.get('/', (req, res) => {
     message: 'Welcome to Chess Tournament API',
     lichessAuth: {
       enabled: true,
-      loginEndpoint: '/api/users/lichess-login'
+      loginEndpoint: '/api/users/login'
     }
   });
 });
