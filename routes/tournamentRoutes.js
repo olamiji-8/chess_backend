@@ -4,19 +4,21 @@ const {
   createTournament, 
   getTournaments, 
   getTournament,
-  registerForTournament
+  registerForTournament,
+  getWalletBalance,
+  updateTournamentStatus
 } = require('../controllers/tournamentController');
 const { protect } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
 
-router.route('/')
-  .post(protect, upload.single('banner'), createTournament)
-  .get(getTournaments);
+// Public routes
+router.get('/', getTournaments);
+router.get('/:id', getTournament);
 
-router.route('/:id')
-  .get(getTournament);
-
-router.route('/:id/register')
-  .post(protect, registerForTournament);
+// Protected routes
+router.post('/', protect, upload.single('banner'), createTournament);
+router.post('/:id/register', protect, registerForTournament);
+router.get('/wallet-balance', protect, getWalletBalance);
+router.put('/:id/status', protect, updateTournamentStatus);
 
 module.exports = router;

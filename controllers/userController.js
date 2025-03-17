@@ -296,42 +296,55 @@
 const axios = require('axios');
 const User = require('../models/User');
 const generatePKCE = require('../server/utils/pkce');
-
-let codeVerifier = '';
+const bcrypt = require('bcryptjs');
 
 const CLIENT_ID = process.env.LICHESS_CLIENT_ID;
-const REDIRECT_URI = process.env.LICHESS_REDIRECT_URI;
+const REDIRECT_URI = process.env.LICHESS_REDIRECT_URI || 'http://localhost:5000/api/users/callback';
 
 exports.loginWithLichess = (req, res) => {
   const pkce = generatePKCE();
-  codeVerifier = pkce.codeVerifier;
-
+  
+  // Store in session instead of global variable
+  req.session.codeVerifier = pkce.codeVerifier;
+  
   const authUrl = `https://lichess.org/oauth?response_type=code&client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&code_challenge_method=S256&code_challenge=${pkce.codeChallenge}&scope=preference:read`;
 
-  console.log('Redirecting to:', authUrl); // helpful for debugging
-
+  console.log('Redirecting to:', authUrl);
   res.redirect(authUrl);
 };
 
 exports.handleCallback = async (req, res) => {
   const { code } = req.query;
+  
+  if (!code) {
+    return res.status(400).json({ error: 'Authorization code is missing' });
+  }
+
+  // Get from session instead of global variable
+  const codeVerifier = req.session.codeVerifier;
+  
+  if (!codeVerifier) {
+    return res.status(400).json({ error: 'Code verifier not found. Please start the authentication process again.' });
+  }
 
   try {
-    // Exchange code for access token
-    const response = await axios.post('https://lichess.org/api/token', null, {
-      params: {
-        grant_type: 'authorization_code',
-        code,
-        client_id: CLIENT_ID,
-        redirect_uri: REDIRECT_URI,
-        code_verifier: codeVerifier,
-      },
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    });
+    const params = new URLSearchParams();
+    params.append('grant_type', 'authorization_code');
+    params.append('code', code);
+    params.append('client_id', CLIENT_ID);
+    params.append('redirect_uri', REDIRECT_URI);
+    params.append('code_verifier', codeVerifier);
+
+    const response = await axios.post(
+      'https://lichess.org/api/token',
+      params,
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      }
+    );
 
     const accessToken = response.data.access_token;
 
-    // Get user profile
     const userRes = await axios.get('https://lichess.org/api/account', {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -340,18 +353,30 @@ exports.handleCallback = async (req, res) => {
 
     const { username } = userRes.data;
 
-    // Save to DB
-    let user = await User.findOne({ username });
+    let user = await User.findOne({ lichessUsername: username });
     if (!user) {
-      user = new User({ username, accessToken });
+      user = new User({ 
+        fullName: username,
+        email: `${username}@example.com`,
+        password: await bcrypt.hash(Math.random().toString(36), 10),
+        lichessUsername: username, 
+        lichessAccessToken: accessToken 
+      });
     } else {
-      user.accessToken = accessToken;
+      user.lichessAccessToken = accessToken;
     }
     await user.save();
 
+    // Clear the used code verifier
+    req.session.codeVerifier = null;
+
+    // Set user session
+    req.session.userId = user._id;
+    req.session.isLoggedIn = true;
+
     res.json({ message: 'Login successful', username });
   } catch (err) {
-    console.error(err);
+    console.error('Token exchange error:', err.message);
     res.status(500).send('Login failed');
   }
 };

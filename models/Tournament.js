@@ -41,19 +41,26 @@ const TournamentSchema = new mongoose.Schema({
       first: { type: Number },
       second: { type: Number },
       third: { type: Number },
-      fourth: { type: Number }
+      fourth: { type: Number },
+      fifth: { type: Number },
+      additional: [{ position: Number, amount: Number }]
     },
     percentage: {
+      basePrizePool: { type: Number },
       first: { type: Number }, // Percentage
       second: { type: Number }, 
       third: { type: Number },
-      fourth: { type: Number }
+      fourth: { type: Number },
+      fifth: { type: Number },
+      additional: [{ position: Number, percentage: Number }]
     },
     special: {
       isFixed: { type: Boolean, default: true },
+      basePrizePool: { type: Number }, // Only used if isFixed is false
       specialPrizes: [{
         category: String, // e.g., "Best under 2200"
-        amount: Number
+        amount: Number, // Fixed amount or percentage depending on isFixed
+        isPercentage: { type: Boolean, default: false }
       }]
     }
   },
@@ -79,6 +86,14 @@ const TournamentSchema = new mongoose.Schema({
     type: String,
     enum: ['upcoming', 'active', 'completed', 'cancelled'],
     default: 'upcoming'
+  },
+  tournamentLink: {
+    type: String,
+    required: true
+  },
+  password: {
+    type: String,
+    default: null
   },
   createdAt: {
     type: Date,

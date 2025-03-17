@@ -3,6 +3,7 @@ const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const asyncHandler = require('express-async-handler');
 const cloudinary = require('../config/cloudinary');
+const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 
 // @desc    Create a new tournament
@@ -19,7 +20,8 @@ exports.createTournament = asyncHandler(async (req, res) => {
     prizeType,
     prizes,
     entryFee,
-    fundingMethod
+    fundingMethod,
+    password
   } = req.body;
 
   // Upload banner image to cloudinary
@@ -38,15 +40,18 @@ exports.createTournament = asyncHandler(async (req, res) => {
   // Calculate total prize pool
   let totalPrizePool = 0;
   if (prizeType === 'fixed') {
-    totalPrizePool = 
-      (prizes.fixed.first || 0) + 
-      (prizes.fixed.second || 0) + 
-      (prizes.fixed.third || 0) + 
-      (prizes.fixed.fourth || 0);
+    // Sum all fixed prizes
+    totalPrizePool = Object.values(prizes.fixed).reduce((sum, prize) => sum + (prize || 0), 0);
+  } else if (prizeType === 'percentage') {
+    // For percentage, we need to set a base prize pool
+    totalPrizePool = prizes.percentage.basePrizePool || 0;
   } else if (prizeType === 'special') {
     if (prizes.special.isFixed) {
       // Calculate total from special prizes
-      totalPrizePool = prizes.special.specialPrizes.reduce((sum, prize) => sum + prize.amount, 0);
+      totalPrizePool = prizes.special.specialPrizes.reduce((sum, prize) => sum + (prize.amount || 0), 0);
+    } else {
+      // For percentage-based special prizes, use the base prize pool
+      totalPrizePool = prizes.special.basePrizePool || 0;
     }
   }
 
@@ -55,7 +60,9 @@ exports.createTournament = asyncHandler(async (req, res) => {
     const user = await User.findById(req.user.id);
     if (user.walletBalance < totalPrizePool) {
       return res.status(400).json({ 
-        message: 'Insufficient wallet balance. Please top up or select another payment method' 
+        message: 'Insufficient wallet balance. Please top up or select another payment method',
+        walletBalance: user.walletBalance,
+        requiredAmount: totalPrizePool
       });
     }
 
@@ -71,7 +78,18 @@ exports.createTournament = asyncHandler(async (req, res) => {
       status: 'completed',
       paymentMethod: 'wallet'
     });
+  } else if (fundingMethod === 'topup') {
+    // Direct user to payment page to top up their wallet
+    return res.status(200).json({
+      success: false,
+      redirectToTopup: true,
+      amountNeeded: totalPrizePool,
+      message: 'Please complete the payment to fund your tournament'
+    });
   }
+
+  // Generate unique tournament link
+  const tournamentLink = `https://lichess.org/tournament/${uuidv4()}`;
 
   // Create tournament
   const tournament = await Tournament.create({
@@ -86,7 +104,9 @@ exports.createTournament = asyncHandler(async (req, res) => {
     prizes,
     entryFee,
     fundingMethod,
-    organizer: req.user.id
+    organizer: req.user.id,
+    tournamentLink,
+    password: password || null
   });
 
   // Add tournament to user's created tournaments
@@ -100,7 +120,7 @@ exports.createTournament = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Get all tournaments with pagination
+// @desc    Get all tournaments with pagination and filters
 // @route   GET /api/tournaments
 // @access  Public
 exports.getTournaments = asyncHandler(async (req, res) => {
@@ -108,6 +128,7 @@ exports.getTournaments = asyncHandler(async (req, res) => {
   const limit = parseInt(req.query.limit, 10) || 10;
   const startIndex = (page - 1) * limit;
   const category = req.query.category;
+  const status = req.query.status || 'active';
   
   let query = {};
   
@@ -116,13 +137,20 @@ exports.getTournaments = asyncHandler(async (req, res) => {
     query.category = category;
   }
   
-  // Filter by status (active by default)
-  query.status = req.query.status || 'active';
+  // Filter by status
+  if (status && status !== 'all') {
+    query.status = status;
+  }
 
   const total = await Tournament.countDocuments(query);
   
   const tournaments = await Tournament.find(query)
     .populate('organizer', 'fullName email')
+    .populate({
+      path: 'participants',
+      select: 'fullName profilePic',
+      options: { limit: 5 } // Limit to just show first 5 participants
+    })
     .skip(startIndex)
     .limit(limit)
     .sort({ startDate: 1 });
@@ -145,7 +173,7 @@ exports.getTournaments = asyncHandler(async (req, res) => {
 exports.getTournament = asyncHandler(async (req, res) => {
   const tournament = await Tournament.findById(req.params.id)
     .populate('organizer', 'fullName email phoneNumber')
-    .populate('participants', 'fullName profilePic');
+    .populate('participants', 'fullName profilePic lichessUsername');
   
   if (!tournament) {
     return res.status(404).json({ message: 'Tournament not found' });
@@ -174,11 +202,18 @@ exports.registerForTournament = asyncHandler(async (req, res) => {
   
   const user = await User.findById(req.user.id);
   
+  // Check if user has Lichess account linked
+  if (!user.lichessUsername) {
+    return res.status(400).json({ message: 'You need to link your Lichess account to register for tournaments' });
+  }
+  
   // Handle entry fee payment if needed
   if (tournament.entryFee > 0) {
     if (user.walletBalance < tournament.entryFee) {
       return res.status(400).json({ 
-        message: 'Insufficient wallet balance. Please top up to register' 
+        message: 'Insufficient wallet balance. Please top up to register',
+        walletBalance: user.walletBalance,
+        entryFee: tournament.entryFee
       });
     }
     
@@ -207,6 +242,47 @@ exports.registerForTournament = asyncHandler(async (req, res) => {
   
   res.status(200).json({
     success: true,
-    message: 'Successfully registered for tournament'
+    message: 'Successfully registered for tournament',
+    tournamentLink: tournament.tournamentLink,
+    password: tournament.password
+  });
+});
+
+// @desc    Get user wallet balance
+// @route   GET /api/tournaments/wallet-balance
+// @access  Private
+exports.getWalletBalance = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id);
+  
+  res.status(200).json({
+    success: true,
+    walletBalance: user.walletBalance
+  });
+});
+
+// @desc    Update tournament status
+// @route   PUT /api/tournaments/:id/status
+// @access  Private (Tournament organizer only)
+exports.updateTournamentStatus = asyncHandler(async (req, res) => {
+  const { status } = req.body;
+  
+  const tournament = await Tournament.findById(req.params.id);
+  
+  if (!tournament) {
+    return res.status(404).json({ message: 'Tournament not found' });
+  }
+  
+  // Check if user is the organizer
+  if (tournament.organizer.toString() !== req.user.id) {
+    return res.status(403).json({ message: 'You are not authorized to update this tournament' });
+  }
+  
+  tournament.status = status;
+  await tournament.save();
+  
+  res.status(200).json({
+    success: true,
+    message: 'Tournament status updated successfully',
+    status: tournament.status
   });
 });
