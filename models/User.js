@@ -51,6 +51,10 @@ lichessAccessToken: {
     type: Number,
     default: 0
   },
+  pin: {
+    type: String,
+    select: false 
+  },
   bankDetails: {
     bankName: String,
     accountNumber: String,

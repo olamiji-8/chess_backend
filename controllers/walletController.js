@@ -1,27 +1,45 @@
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const asyncHandler = require('express-async-handler');
+const bcrypt = require('bcryptjs');
 const axios = require('axios');
 const crypto = require('crypto');
 
-// @desc    Initiate deposit to wallet
+// @desc    Initiate deposit to wallet with PIN verification
 // @route   POST /api/wallet/deposit
 // @access  Private
 exports.initiateDeposit = asyncHandler(async (req, res) => {
-  const { amount } = req.body;
+  const { amount, pin } = req.body;
+  const userId = req.session.userId || req.user.id;
   
-  if (!amount || amount <= 0) {
+  // Validate amount
+  if (!amount || isNaN(amount) || amount <= 0) {
     return res.status(400).json({ message: 'Please provide a valid amount' });
   }
   
-  const user = await User.findById(req.user.id);
+  // Validate PIN
+  if (!pin) {
+    return res.status(400).json({ message: 'PIN is required to authorize this transaction' });
+  }
+  
+  const user = await User.findById(userId).select('+pin');
+  
+  if (!user) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+  
+  // Verify PIN
+  const isPinValid = await bcrypt.compare(pin, user.pin);
+  if (!isPinValid) {
+    return res.status(401).json({ message: 'Invalid PIN' });
+  }
   
   // Generate reference
   const reference = 'CHESS_' + crypto.randomBytes(8).toString('hex');
   
   // Create transaction record
   const transaction = await Transaction.create({
-    user: req.user.id,
+    user: userId,
     type: 'deposit',
     amount,
     reference,
@@ -62,14 +80,14 @@ exports.initiateDeposit = asyncHandler(async (req, res) => {
     console.error('Paystack Error:', error.response ? error.response.data : error.message);
     res.status(500).json({
       success: false,
-      message: 'Failed to initialize payment'
+      message: 'Failed to initialize payment. Please try again later.'
     });
   }
 });
 
 // @desc    Verify deposit callback
 // @route   GET /api/wallet/verify/:reference
-// @access  Private
+// @access  Public
 exports.verifyDeposit = asyncHandler(async (req, res) => {
   const { reference } = req.params;
   
@@ -130,21 +148,42 @@ exports.verifyDeposit = asyncHandler(async (req, res) => {
   }
 });
 
-// @desc    Initiate withdrawal
+// @desc    Initiate withdrawal with PIN verification
 // @route   POST /api/wallet/withdraw
 // @access  Private
 exports.initiateWithdrawal = asyncHandler(async (req, res) => {
-  const { amount } = req.body;
+  const { amount, pin } = req.body;
+  const userId = req.session.userId || req.user.id;
   
-  if (!amount || amount <= 0) {
+  // Validate amount
+  if (!amount || isNaN(amount) || amount <= 0) {
     return res.status(400).json({ message: 'Please provide a valid amount' });
   }
   
-  const user = await User.findById(req.user.id);
+  // Validate PIN
+  if (!pin) {
+    return res.status(400).json({ message: 'PIN is required to authorize this withdrawal' });
+  }
+  
+  const user = await User.findById(userId).select('+pin');
+  
+  if (!user) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+  
+  // Verify PIN
+  const isPinValid = await bcrypt.compare(pin, user.pin);
+  if (!isPinValid) {
+    return res.status(401).json({ message: 'Invalid PIN' });
+  }
   
   // Check wallet balance
   if (user.walletBalance < amount) {
-    return res.status(400).json({ message: 'Insufficient wallet balance' });
+    return res.status(400).json({ 
+      message: 'Insufficient wallet balance', 
+      walletBalance: user.walletBalance,
+      requestedAmount: amount
+    });
   }
   
   // Check if bank details are provided
@@ -152,48 +191,59 @@ exports.initiateWithdrawal = asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Please update your bank details before withdrawal' });
   }
   
+  // Check if user is verified
+  if (!user.isVerified) {
+    return res.status(403).json({ message: 'Account verification is required before making withdrawals. Please verify your account first.' });
+  }
+  
   // Generate reference
   const reference = 'CHESS_WD_' + crypto.randomBytes(8).toString('hex');
   
   // Create transaction record
-  await Transaction.create({
-    user: req.user.id,
+  const transaction = await Transaction.create({
+    user: userId,
     type: 'withdrawal',
     amount,
     reference,
     status: 'pending',
-    paymentMethod: 'bank_transfer'
+    paymentMethod: 'bank_transfer',
+    details: {
+      bankName: user.bankDetails.bankName,
+      accountNumber: user.bankDetails.accountNumber,
+      accountName: user.bankDetails.accountName || user.fullName
+    }
   });
   
   // Deduct from wallet balance
   user.walletBalance -= amount;
   await user.save();
   
-  // In a real app, you would integrate with Paystack Transfer API here
-  // For simplicity, we'll mark it as completed
+  // In a real app, we would integrate with Paystack Transfer API here
   
   res.status(200).json({
     success: true,
-    message: 'Withdrawal request initiated successfully',
+    message: 'Withdrawal request initiated successfully. Please allow 1-2 business days for processing.',
     data: {
       amount,
       newBalance: user.walletBalance,
-      reference
+      reference,
+      estimatedProcessingTime: '1-2 business days'
     }
   });
 });
 
-// @desc    Get wallet transaction history
+// @desc    Get all transaction history with pagination
 // @route   GET /api/wallet/transactions
 // @access  Private
 exports.getTransactions = asyncHandler(async (req, res) => {
+  const userId = req.session.userId || req.user.id;
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 10;
   const startIndex = (page - 1) * limit;
   
-  const total = await Transaction.countDocuments({ user: req.user.id });
+  const total = await Transaction.countDocuments({ user: userId });
   
-  const transactions = await Transaction.find({ user: req.user.id })
+  const transactions = await Transaction.find({ user: userId })
     .populate('tournament', 'title')
     .skip(startIndex)
     .limit(limit)
@@ -208,5 +258,47 @@ exports.getTransactions = asyncHandler(async (req, res) => {
       totalPages: Math.ceil(total / limit)
     },
     data: transactions
+  });
+});
+
+// @desc    Get wallet balance
+// @route   GET /api/wallet/balance
+// @access  Private
+exports.getWalletBalance = asyncHandler(async (req, res) => {
+  const userId = req.session.userId || req.user.id;
+  const user = await User.findById(userId);
+  
+  if (!user) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+  
+  res.status(200).json({
+    success: true,
+    walletBalance: user.walletBalance
+  });
+});
+
+// @desc    Verify PIN for wallet operations
+// @route   POST /api/wallet/verify-pin
+// @access  Private
+exports.verifyPin = asyncHandler(async (req, res) => {
+  const { pin } = req.body;
+  const userId = req.session.userId || req.user.id;
+  
+  if (!pin) {
+    return res.status(400).json({ message: 'PIN is required' });
+  }
+  
+  const user = await User.findById(userId).select('+pin');
+  
+  if (!user) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+  
+  const isPinValid = await bcrypt.compare(pin, user.pin);
+  
+  res.status(200).json({
+    success: isPinValid,
+    message: isPinValid ? 'PIN verified successfully' : 'Invalid PIN'
   });
 });
