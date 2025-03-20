@@ -248,17 +248,6 @@ exports.registerForTournament = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Get user wallet balance
-// @route   GET /api/tournaments/wallet-balance
-// @access  Private
-exports.getWalletBalance = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user.id);
-  
-  res.status(200).json({
-    success: true,
-    walletBalance: user.walletBalance
-  });
-});
 
 // @desc    Update tournament status
 // @route   PUT /api/tournaments/:id/status

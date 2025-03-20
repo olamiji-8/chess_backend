@@ -13,7 +13,6 @@ const upload = require('../middleware/uploadMiddleware');
 
 // Public routes
 router.get('/', getTournaments);
-router.get('/wallet-balance', protect, getWalletBalance);
 router.get('/:id', getTournament);
 
 // Protected routes
