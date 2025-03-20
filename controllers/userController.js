@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const cloudinary = require('../config/cloudinary');
 const fs = require('fs');
 const generatePKCE = require('../server/utils/pkce');
+const { verifyUserPin } = require('../utils/pinVerification');
 
 const CLIENT_ID = process.env.LICHESS_CLIENT_ID;
 const REDIRECT_URI = process.env.LICHESS_REDIRECT_URI || 'http://localhost:5000/api/users/callback';
@@ -414,14 +415,14 @@ exports.updatePin = asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'PINs do not match' });
   }
   
-  // If user already has a PIN, verify the current PIN
+  // If user already has a PIN, verify the current PIN using the utility
   if (user.pin) {
     if (!currentPin) {
       return res.status(400).json({ message: 'Current PIN is required' });
     }
     
-    const isMatch = await bcrypt.compare(currentPin, user.pin);
-    if (!isMatch) {
+    const pinVerification = await verifyUserPin(userId, currentPin);
+    if (!pinVerification.success) {
       return res.status(401).json({ message: 'Current PIN is incorrect' });
     }
   }
@@ -437,6 +438,8 @@ exports.updatePin = asyncHandler(async (req, res) => {
   });
 });
 
+
+
 // @desc    Verify PIN
 // @route   POST /api/users/verify-pin
 // @access  Private
@@ -444,29 +447,11 @@ exports.verifyPin = asyncHandler(async (req, res) => {
   const { pin } = req.body;
   const userId = req.session.userId || req.user.id;
   
-  if (!pin) {
-    return res.status(400).json({ message: 'PIN is required' });
-  }
+  const pinVerification = await verifyUserPin(userId, pin);
   
-  const user = await User.findById(userId).select('+pin');
-  
-  if (!user) {
-    return res.status(404).json({ message: 'User not found' });
-  }
-  
-  // Check if PIN exists before comparing
-  if (!user.pin) {
-    return res.status(400).json({ 
-      success: false,
-      message: 'PIN has not been set up yet' 
-    });
-  }
-  
-  const isPinValid = await bcrypt.compare(pin, user.pin);
-  
-  res.status(200).json({
-    success: isPinValid,
-    message: isPinValid ? 'PIN verified successfully' : 'Invalid PIN'
+  res.status(pinVerification.success ? 200 : 401).json({
+    success: pinVerification.success,
+    message: pinVerification.message
   });
 });
 

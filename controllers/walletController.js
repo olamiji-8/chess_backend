@@ -4,6 +4,7 @@ const asyncHandler = require('express-async-handler');
 const bcrypt = require('bcryptjs');
 const axios = require('axios');
 const crypto = require('crypto');
+const { verifyUserPin } = require('../utils/pinVerification');
 
 // @desc    Initiate deposit to wallet with PIN verification
 // @route   POST /api/wallet/deposit
@@ -17,23 +18,17 @@ exports.initiateDeposit = asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Please provide a valid amount' });
   }
   
-  // Validate PIN
-  if (!pin) {
-    return res.status(400).json({ message: 'PIN is required to authorize this transaction' });
+  // Validate PIN using the utility function
+  const pinVerification = await verifyUserPin(userId, pin);
+  
+  if (!pinVerification.success) {
+    return res.status(401).json({ message: pinVerification.message });
   }
   
-  const user = await User.findById(userId).select('+pin');
-  
-  if (!user) {
-    return res.status(404).json({ message: 'User not found' });
-  }
-  
-  // Verify PIN
-  const isPinValid = await bcrypt.compare(pin, user.pin);
-  if (!isPinValid) {
-    return res.status(401).json({ message: 'Invalid PIN' });
-  }
-  
+  // Use the user object from verification
+  const user = pinVerification.user;
+
+
   // Generate reference
   const reference = 'CHESS_' + crypto.randomBytes(8).toString('hex');
   
@@ -160,22 +155,17 @@ exports.initiateWithdrawal = asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Please provide a valid amount' });
   }
   
-  // Validate PIN
-  if (!pin) {
-    return res.status(400).json({ message: 'PIN is required to authorize this withdrawal' });
+  // Validate PIN using the utility function
+  const pinVerification = await verifyUserPin(userId, pin);
+  
+  if (!pinVerification.success) {
+    return res.status(401).json({ message: pinVerification.message });
   }
   
-  const user = await User.findById(userId).select('+pin');
+  // Use the user object from verification
+  const user = pinVerification.user;
+
   
-  if (!user) {
-    return res.status(404).json({ message: 'User not found' });
-  }
-  
-  // Verify PIN
-  const isPinValid = await bcrypt.compare(pin, user.pin);
-  if (!isPinValid) {
-    return res.status(401).json({ message: 'Invalid PIN' });
-  }
   
   // Check wallet balance
   if (user.walletBalance < amount) {
@@ -278,27 +268,3 @@ exports.getWalletBalance = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Verify PIN for wallet operations
-// @route   POST /api/wallet/verify-pin
-// @access  Private
-exports.verifyPin = asyncHandler(async (req, res) => {
-  const { pin } = req.body;
-  const userId = req.session.userId || req.user.id;
-  
-  if (!pin) {
-    return res.status(400).json({ message: 'PIN is required' });
-  }
-  
-  const user = await User.findById(userId).select('+pin');
-  
-  if (!user) {
-    return res.status(404).json({ message: 'User not found' });
-  }
-  
-  const isPinValid = await bcrypt.compare(pin, user.pin);
-  
-  res.status(200).json({
-    success: isPinValid,
-    message: isPinValid ? 'PIN verified successfully' : 'Invalid PIN'
-  });
-});
