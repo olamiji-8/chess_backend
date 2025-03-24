@@ -27,21 +27,21 @@ if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
 }
 
-// Session configuration
+// Session configuration - Updated for better cross-domain compatibility
 app.use(session({
   secret: process.env.SESSION_SECRET || 'chess-tournament-secret-key',
   resave: false,
-  saveUninitialized: true, // Changed to true to ensure session is created for auth
+  saveUninitialized: true,
   store: MongoStore.create({ 
     mongoUrl: process.env.MONGODB_URL,
     collectionName: 'sessions',
     ttl: 14 * 24 * 60 * 60
   }),
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: false, // Set to true only in production with HTTPS
     httpOnly: true,
     maxAge: 14 * 24 * 60 * 60 * 1000,
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax' // Important for cross-site cookies
+    sameSite: 'lax' // More compatible setting during development
   }
 }));
 
@@ -49,8 +49,7 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Configure Passport - MOVE THIS TO A SEPARATE FILE
-// First import the user model
+// Configure Passport
 const User = require('./models/User');
 
 // Serialize and deserialize user
@@ -67,7 +66,7 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Now import routes that use passport
+// Import routes
 const tournamentRoutes = require('./routes/tournamentRoutes');
 const userRoutes = require('./routes/userRoutes');
 const walletRoutes = require('./routes/walletRoutes');
@@ -105,13 +104,18 @@ app.use('/api/contact', contactRoutes);
 app.use('/api/users/verification', verificationRoutes);
 app.use('/api/admin', adminRoutes);
 
-// Debug endpoint for sessions
+// Enhanced debug endpoint for sessions
 app.get('/api/debug/session', (req, res) => {
   res.json({
     sessionID: req.sessionID,
     session: req.session,
     isAuthenticated: req.isAuthenticated(),
-    user: req.user
+    user: req.user,
+    cookies: req.headers.cookie,
+    cors: {
+      origin: req.headers.origin,
+      allowedOrigin: process.env.FRONTEND_URL || 'http://localhost:3000'
+    }
   });
 });
 
@@ -126,29 +130,37 @@ app.get('/', (req, res) => {
   });
 });
 
-// Session status route with additional Lichess info
+// Enhanced session status route
 app.get('/api/session-status', (req, res) => {
   res.json({
-    isLoggedIn: !!req.session.isLoggedIn,
-    userId: req.session.userId || null,
+    isLoggedIn: req.isAuthenticated(),
+    userId: req.user ? req.user._id : null,
     hasLichessToken: !!req.session.lichessAccessToken,
     sessionID: req.sessionID,
-    user: req.user || null
+    user: req.user ? {
+      _id: req.user._id,
+      username: req.user.username,
+      email: req.user.email,
+      role: req.user.role
+    } : null
   });
 });
 
-// Error handler
+// Error handler with more details
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('Error:', err);
   res.status(500).json({ 
-    error: 'Something broke!',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Internal Server Error'
+    error: 'Server error',
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Internal Server Error',
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
   });
 });
 
 // Export for Vercel
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
+  console.log(`CORS enabled for: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
 });
+
 module.exports = app;
