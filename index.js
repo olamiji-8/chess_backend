@@ -38,10 +38,10 @@ app.use(session({
     ttl: 14 * 24 * 60 * 60
   }),
   cookie: {
-    secure: false, // Set to true only in production with HTTPS
+    secure: process.env.NODE_ENV === 'production', // True in production (requires HTTPS)
     httpOnly: true,
     maxAge: 14 * 24 * 60 * 60 * 1000,
-    sameSite: 'lax' // More compatible setting during development
+    sameSite: process.env.FRONTEND_URL !== process.env.BACKEND_URL ? 'none' : 'lax'
   }
 }));
 
