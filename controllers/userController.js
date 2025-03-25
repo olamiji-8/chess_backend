@@ -142,13 +142,22 @@ exports.handleCallback = async (req, res) => {
     });
   }
 
+  // Debugging: Log session details
+  console.log('Session before callback:', {
+    id: req.sessionID,
+    codeVerifier: req.session.codeVerifier
+  });
+
   const codeVerifier = req.session.codeVerifier;
   
   if (!codeVerifier) {
-    return res.status(400).json({ 
-      success: false, 
-      error: 'Code verifier expired. Please restart authentication.' 
+    // More detailed error handling
+    console.error('Code verifier missing or expired', {
+      sessionId: req.sessionID,
+      sessionCookie: req.headers.cookie
     });
+
+    return res.redirect(`${FRONTEND_URL}`);
   }
 
   try {

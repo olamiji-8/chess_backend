@@ -64,18 +64,17 @@ function getSessionConfig() {
   // Adaptive cookie configuration
   if (isProduction) {
     baseSessionConfig.cookie = {
-      secure: true, // HTTPS only
+      secure: true,           // HTTPS only
       httpOnly: true,
-      sameSite: 'none', // Required for cross-origin in production
+      sameSite: 'none',       // Cross-site cookies
       maxAge: 14 * 24 * 60 * 60 * 1000, // 14 days
       domain: new URL(process.env.FRONTEND_URL).hostname
     };
   } else {
-    // Local development settings
     baseSessionConfig.cookie = {
-      secure: false, // Allow HTTP
+      secure: false,           // Allow HTTP
       httpOnly: true,
-      sameSite: 'lax', // Relaxed for local dev
+      sameSite: 'lax',         // Relaxed for local dev
       maxAge: 14 * 24 * 60 * 60 * 1000 // 14 days
     };
   }
