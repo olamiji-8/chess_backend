@@ -136,14 +136,19 @@ exports.handleCallback = async (req, res) => {
   const { code } = req.query;
   
   if (!code) {
-    return res.status(400).json({ error: 'Authorization code is missing' });
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Authorization code is missing' 
+    });
   }
 
-  // Get from session instead of global variable
   const codeVerifier = req.session.codeVerifier;
   
   if (!codeVerifier) {
-    return res.status(400).json({ error: 'Code verifier not found. Please start the authentication process again.' });
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Code verifier expired. Please restart authentication.' 
+    });
   }
 
   try {
@@ -170,33 +175,55 @@ exports.handleCallback = async (req, res) => {
       },
     });
 
-    const { username } = userRes.data;
+    const { username, email: lichessEmail } = userRes.data;
 
-    let user = await User.findOne({ lichessUsername: username });
+    // More robust user finding/creation
+    let user = await User.findOne({ 
+      $or: [
+        { lichessUsername: username },
+        { email: lichessEmail || `${username}@lichess.org` }
+      ]
+    });
+
     if (!user) {
       user = new User({ 
         fullName: username,
-        email: `${username}@example.com`,
-        password: await bcrypt.hash(Math.random().toString(36), 10),
+        email: lichessEmail || `${username}@lichess.org`,
+        password: await bcrypt.hash(crypto.randomBytes(20).toString('hex'), 10),
         lichessUsername: username, 
-        lichessAccessToken: accessToken 
+        lichessAccessToken: accessToken,
+        isVerified: false // Default to unverified
       });
     } else {
+      // Update existing user's Lichess details
       user.lichessAccessToken = accessToken;
+      user.lichessUsername = username;
     }
+
     await user.save();
 
     // Clear the used code verifier
     req.session.codeVerifier = null;
 
-    // Set user session
+    // Set user session with additional security
     req.session.userId = user._id;
     req.session.isLoggedIn = true;
+    req.session.loginMethod = 'lichess';
 
-    res.json({ message: 'Login successful', username });
+    // Redirect to frontend with a success flag
+    res.redirect(`${FRONTEND_URL}`);
+
   } catch (err) {
-    console.error('Token exchange error:', err.message);
-    res.status(500).send('Login failed');
+    console.error('Lichess Authentication Error:', {
+      message: err.message,
+      response: err.response?.data,
+      stack: err.stack
+    });
+
+    res.status(500).json({ 
+      success: false, 
+      error: 'Authentication failed. Please try again.' 
+    });
   }
 };
 
