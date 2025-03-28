@@ -221,7 +221,7 @@ exports.handleCallback = async (req, res) => {
     console.log("🟢 Session AFTER callback:", req.session);
 
     // ✅ Redirect frontend with JWT
-    return res.redirect(`${FRONTEND_URL}/auth-success?token=${token}`);
+    return res.redirect(FRONTEND_URL);
   } catch (error) {
     console.error("❌ Lichess Authentication Error:", {
       message: error.message,
