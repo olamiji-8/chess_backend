@@ -81,69 +81,69 @@ exports.initiateDeposit = asyncHandler(async (req, res) => {
 });
 
 
-// @desc    Handle Paystack webhook
-// @route   POST /api/wallet/webhook
-// @access  Public
-exports.handlePaystackWebhook = asyncHandler(async (req, res) => {
-  // Verify that the request is from Paystack
-  const hash = crypto
-    .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
-    .update(JSON.stringify(req.body))
-    .digest('hex');
+// // @desc    Handle Paystack webhook
+// // @route   POST /api/wallet/webhook
+// // @access  Public
+// exports.handlePaystackWebhook = asyncHandler(async (req, res) => {
+//   // Verify that the request is from Paystack
+//   const hash = crypto
+//     .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+//     .update(JSON.stringify(req.body))
+//     .digest('hex');
   
-  if (hash !== req.headers['x-paystack-signature']) {
-    return res.status(401).json({ message: 'Invalid signature' });
-  }
+//   if (hash !== req.headers['x-paystack-signature']) {
+//     return res.status(401).json({ message: 'Invalid signature' });
+//   }
   
-  // Process the webhook payload
-  const event = req.body;
+//   // Process the webhook payload
+//   const event = req.body;
   
-  // Handle the event based on its type
-  switch(event.event) {
-    case 'charge.success':
-      // Extract the reference and verify transaction
-      const { reference, status, amount } = event.data;
+//   // Handle the event based on its type
+//   switch(event.event) {
+//     case 'charge.success':
+//       // Extract the reference and verify transaction
+//       const { reference, status, amount } = event.data;
       
-      // Find the transaction in our database
-      const transaction = await Transaction.findOne({ reference });
+//       // Find the transaction in our database
+//       const transaction = await Transaction.findOne({ reference });
       
-      if (!transaction) {
-        // Log the issue but return 200 to acknowledge receipt
-        console.error(`Transaction with reference ${reference} not found`);
-        return res.sendStatus(200);
-      }
+//       if (!transaction) {
+//         // Log the issue but return 200 to acknowledge receipt
+//         console.error(`Transaction with reference ${reference} not found`);
+//         return res.sendStatus(200);
+//       }
       
-      // If transaction already completed, just acknowledge
-      if (transaction.status === 'completed') {
-        return res.sendStatus(200);
-      }
+//       // If transaction already completed, just acknowledge
+//       if (transaction.status === 'completed') {
+//         return res.sendStatus(200);
+//       }
       
-      // Update transaction status
-      if (status === 'success') {
-        transaction.status = 'completed';
-        await transaction.save();
+//       // Update transaction status
+//       if (status === 'success') {
+//         transaction.status = 'completed';
+//         await transaction.save();
         
-        // Update user wallet balance
-        const user = await User.findById(transaction.user);
-        user.walletBalance += (amount / 100); // Convert from kobo to naira
-        await user.save();
+//         // Update user wallet balance
+//         const user = await User.findById(transaction.user);
+//         user.walletBalance += (amount / 100); // Convert from kobo to naira
+//         await user.save();
         
-        console.log(`Deposit successful: ${amount / 100} naira added to user ${user._id}`);
-      } else {
-        transaction.status = 'failed';
-        await transaction.save();
-        console.log(`Payment verification failed for reference ${reference}`);
-      }
-      break;
+//         console.log(`Deposit successful: ${amount / 100} naira added to user ${user._id}`);
+//       } else {
+//         transaction.status = 'failed';
+//         await transaction.save();
+//         console.log(`Payment verification failed for reference ${reference}`);
+//       }
+//       break;
       
-    case 'transfer.success':
-      // Handle successful withdrawal transfers if you implement Paystack transfers
-      // Similar logic to above but for withdrawal transactions
-      break;
+//     case 'transfer.success':
+//       // Handle successful withdrawal transfers if you implement Paystack transfers
+//       // Similar logic to above but for withdrawal transactions
+//       break;
       
-    case 'transfer.failed':
-      // Handle failed withdrawal transfers
-      break;
+//     case 'transfer.failed':
+//       // Handle failed withdrawal transfers
+//       break;
 
 // @desc    Verify deposit callback
 // @route   GET /api/wallet/verify/:reference
