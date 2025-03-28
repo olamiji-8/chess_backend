@@ -8,6 +8,8 @@ const cloudinary = require('../config/cloudinary');
 const fs = require('fs');
 const generatePKCE = require('../server/utils/pkce');
 const { verifyUserPin } = require('../utils/pinVerification');
+const jwt = require('jsonwebtoken');
+
 
 const CLIENT_ID = process.env.LICHESS_CLIENT_ID;
 const REDIRECT_URI = process.env.LICHESS_REDIRECT_URI || 'http://localhost:5000/api/users/callback';
@@ -142,7 +144,7 @@ exports.handleCallback = async (req, res) => {
         sessionId: req.sessionID,
         sessionData: req.session,
       });
-      return res.redirect(`${FRONTEND_URL}/auth-success?token=${token}`);
+      return res.redirect(FRONTEND_URL);
     }
 
     console.log("🔵 Session BEFORE callback:", req.session);
