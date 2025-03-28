@@ -31,17 +31,27 @@ app.use((req, res, next) => {
 });
 
 // CORS Configuration
+// const corsOptions = {
+//   origin: [
+//     process.env.FRONTEND_URL, 
+//     'http://localhost:3000', 
+//     'https://sport64sqrs.vercel.app'
+//   ],
+//   credentials: true,
+//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+//   allowedHeaders: ['Content-Type', 'Authorization'],
+//   optionsSuccessStatus: 200
+// };
+
 const corsOptions = {
-  origin: [
-    process.env.FRONTEND_URL, 
-    'http://localhost:3000', 
-    'https://sport64sqrs.vercel.app'
-  ],
-  credentials: true,
+  origin: 'https://sport64sqrs.vercel.app', // Allow frontend domain
+  credentials: true, // Required for cookies
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  optionsSuccessStatus: 200
 };
+
+app.use(cors(corsOptions));
+
 
 // Middleware
 app.use(cors(corsOptions));
@@ -52,35 +62,54 @@ app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 // Connect to database
 dbconnect();
 
-// Adaptive Session Configuration
-function getSessionConfig() {
-  const isProduction = process.env.NODE_ENV === 'production';
+// // Adaptive Session Configuration
+// function getSessionConfig() {
+//   const isProduction = process.env.NODE_ENV === 'production';
 
-  const baseSessionConfig = {
-    secret: process.env.SESSION_SECRET || 'fallback-secret-key',
-    resave: false,
-    saveUninitialized: false,
-    store: MongoStore.create({ 
-      mongoUrl: process.env.MONGODB_URL,
-      collectionName: 'sessions',
-      ttl: 14 * 24 * 60 * 60 // 14 days
-    }),
-    cookie: {
-      secure: isProduction, // Secure in production
-      httpOnly: true,
-      sameSite: isProduction ? 'none' : 'lax',
-      maxAge: 14 * 24 * 60 * 60 * 1000, // 14 days
-       domain: isProduction ? new URL(process.env.FRONTEND_URL).hostname : 'localhost',
-      path: '/'
-    }
-  };
+//   const baseSessionConfig = {
+//     secret: process.env.SESSION_SECRET || 'fallback-secret-key',
+//     resave: false,
+//     saveUninitialized: false,
+//     store: MongoStore.create({ 
+//       mongoUrl: process.env.MONGODB_URL,
+//       collectionName: 'sessions',
+//       ttl: 14 * 24 * 60 * 60 // 14 days
+//     }),
+//     cookie: {
+//       secure: isProduction, // Secure in production
+//       httpOnly: true,
+//       sameSite: isProduction ? 'none' : 'lax',
+//       maxAge: 14 * 24 * 60 * 60 * 1000, // 14 days
+//        domain: isProduction ? new URL(process.env.FRONTEND_URL).hostname : 'localhost',
+//       path: '/'
+//     }
+//   };
 
-  return baseSessionConfig;
-}
+//   return baseSessionConfig;
+// }
 
-// Middleware setup
-const sessionConfig = getSessionConfig();
-app.use(session(sessionConfig));
+// // Middleware setup
+// const sessionConfig = getSessionConfig();
+// app.use(session(sessionConfig));
+
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  store: MongoStore.create({ 
+    mongoUrl: process.env.MONGODB_URL,
+    collectionName: 'sessions',
+    ttl: 14 * 24 * 60 * 60 // 14 days
+  }),
+  cookie: {
+    secure: process.env.NODE_ENV === 'production', // Only secure in production
+    httpOnly: true,    // Prevent client-side access
+    sameSite: 'none',  // Required for cross-origin cookies
+    domain: '.sport64sqrs.vercel.app',  // Match frontend domain
+    maxAge: 14 * 24 * 60 * 60 * 1000, // 14 days
+  }
+}));
+
 
 // Additional Session Logging Middleware
 app.use((req, res, next) => {
