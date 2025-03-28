@@ -12,6 +12,7 @@ const { verifyUserPin } = require('../utils/pinVerification');
 const CLIENT_ID = process.env.LICHESS_CLIENT_ID;
 const REDIRECT_URI = process.env.LICHESS_REDIRECT_URI || 'http://localhost:5000/api/users/callback';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+const SECRET_KEY = process.env.JWT_SECRET || 'your-secret-key';
 
 // @desc    Register a new user
 // @route   POST /api/users/register
@@ -133,33 +134,26 @@ exports.loginWithLichess = (req, res) => {
 };
 
 exports.handleCallback = async (req, res) => {
-  const { code } = req.query;
-
-  if (!code) {
-    return res.status(400).json({ success: false, error: "Authorization code is missing" });
-  }
-
-  // Debugging: Log session details before processing
-  console.log("🔵 Session BEFORE callback:", req.session);
-
-  const codeVerifier = req.session?.codeVerifier;
-  if (!codeVerifier) {
-    console.error("❌ Code verifier missing or session expired!", {
-      sessionId: req.sessionID,
-      sessionData: req.session,
-    });
-
-    return res.redirect(FRONTEND_URL);
-  }
-
   try {
+    const { code } = req.query;
+
+    if (!code || !req.session?.codeVerifier) {
+      console.error("❌ Code verifier missing or session expired!", {
+        sessionId: req.sessionID,
+        sessionData: req.session,
+      });
+      return res.redirect(`${FRONTEND_URL}/auth-success?token=${token}`);
+    }
+
+    console.log("🔵 Session BEFORE callback:", req.session);
+
     // Exchange the code for an access token
     const params = new URLSearchParams();
     params.append("grant_type", "authorization_code");
     params.append("code", code);
     params.append("client_id", CLIENT_ID);
     params.append("redirect_uri", REDIRECT_URI);
-    params.append("code_verifier", codeVerifier);
+    params.append("code_verifier", req.session.codeVerifier);
 
     const tokenResponse = await axios.post("https://lichess.org/api/token", params, {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -207,23 +201,30 @@ exports.handleCallback = async (req, res) => {
     // Clear the used code verifier
     req.session.codeVerifier = null;
 
-    // Set user session
+    // ✅ Store session
     req.session.userId = user._id;
     req.session.isLoggedIn = true;
     req.session.loginMethod = "lichess";
 
-    // Force session save before redirecting
+    // ✅ Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id },
+      SECRET_KEY,
+      { expiresIn: "7d" } // Token valid for 7 days
+    );
+
+    // ✅ Force session save before redirecting
     await new Promise((resolve) => req.session.save(resolve));
 
     console.log("🟢 Session AFTER callback:", req.session);
 
-    // Redirect to frontend with success flag
-    return res.redirect(FRONTEND_URL);
-  } catch (err) {
+    // ✅ Redirect frontend with JWT
+    return res.redirect(`${FRONTEND_URL}/auth-success?token=${token}`);
+  } catch (error) {
     console.error("❌ Lichess Authentication Error:", {
-      message: err.message,
-      response: err.response?.data,
-      stack: err.stack,
+      message: error.message,
+      response: error.response?.data,
+      stack: error.stack,
     });
 
     return res.status(500).json({ success: false, error: "Authentication failed. Please try again." });

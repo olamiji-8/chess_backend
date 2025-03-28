@@ -9,6 +9,8 @@ const passport = require('passport');
 const dbconnect = require('./config/dbconnect');
 require('dotenv').config();
 require('./config/passport');
+const jwt = require('jsonwebtoken');
+const SECRET_KEY = process.env.JWT_SECRET; 
 
 // Initialize Express
 const app = express();
@@ -234,6 +236,33 @@ app.use((err, req, res, next) => {
     message: process.env.NODE_ENV === 'development' ? err.message : 'Internal Server Error',
     stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
   });
+});
+
+app.get('/api/users/session', (req, res) => {
+  if (req.session && req.session.isLoggedIn) {
+    return res.json({
+      isLoggedIn: true,
+      userId: req.session.userId,
+      loginMethod: req.session.loginMethod
+    });
+  }
+
+  // If session does not exist, check JWT token
+  const token = req.headers.authorization?.split(" ")[1]; // Extract token from "Bearer <token>"
+  if (token) {
+    jwt.verify(token, SECRET_KEY, (err, decoded) => {
+      if (err) {
+        return res.status(401).json({ message: "Invalid token" });
+      }
+      res.json({
+        isLoggedIn: true,
+        userId: decoded.userId,
+        loginMethod: 'jwt'
+      });
+    });
+  } else {
+    res.json({ isLoggedIn: false });
+  }
 });
 
 // 404 Not Found Handler
