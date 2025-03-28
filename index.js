@@ -32,8 +32,14 @@ app.use((req, res, next) => {
 
 // CORS Configuration
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: [
+    process.env.FRONTEND_URL, 
+    'http://localhost:3000', 
+    'https://sport64sqrs.vercel.app'
+  ],
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   optionsSuccessStatus: 200
 };
 
@@ -49,7 +55,7 @@ dbconnect();
 // Adaptive Session Configuration
 function getSessionConfig() {
   const isProduction = process.env.NODE_ENV === 'production';
-  
+
   const baseSessionConfig = {
     secret: process.env.SESSION_SECRET || 'fallback-secret-key',
     resave: false,
@@ -58,26 +64,16 @@ function getSessionConfig() {
       mongoUrl: process.env.MONGODB_URL,
       collectionName: 'sessions',
       ttl: 14 * 24 * 60 * 60 // 14 days
-    })
-  };
-
-  // Adaptive cookie configuration
-  if (isProduction) {
-    baseSessionConfig.cookie = {
-      secure: true,           // HTTPS only
+    }),
+    cookie: {
+      secure: isProduction, // Secure in production
       httpOnly: true,
-      sameSite: 'none',       // Cross-site cookies
+      sameSite: isProduction ? 'none' : 'lax',
       maxAge: 14 * 24 * 60 * 60 * 1000, // 14 days
-      domain: new URL(process.env.FRONTEND_URL).hostname
-    };
-  } else {
-    baseSessionConfig.cookie = {
-      secure: false,           // Allow HTTP
-      httpOnly: true,
-      sameSite: 'lax',         // Relaxed for local dev
-      maxAge: 14 * 24 * 60 * 60 * 1000 // 14 days
-    };
-  }
+       domain: isProduction ? new URL(process.env.FRONTEND_URL).hostname : 'localhost',
+      path: '/'
+    }
+  };
 
   return baseSessionConfig;
 }

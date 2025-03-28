@@ -8,7 +8,7 @@ passport.use('lichess', new OAuth2Strategy({
   tokenURL: 'https://lichess.org/api/token',
   clientID: process.env.LICHESS_CLIENT_ID,
   clientSecret: process.env.LICHESS_CLIENT_SECRET,
-  callbackURL: `${process.env.BACKEND_URL}/api/users/lichess-callback`
+  callbackURL: `${process.env.BACKEND_URL}/api/users/callback`
 }, async (accessToken, refreshToken, profile, done) => {
   try {
     // Fetch user profile from Lichess

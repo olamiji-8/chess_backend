@@ -134,77 +134,70 @@ exports.loginWithLichess = (req, res) => {
 
 exports.handleCallback = async (req, res) => {
   const { code } = req.query;
-  
+
   if (!code) {
-    return res.status(400).json({ 
-      success: false, 
-      error: 'Authorization code is missing' 
-    });
+    return res.status(400).json({ success: false, error: "Authorization code is missing" });
   }
 
-  // Debugging: Log session details
-  console.log('Session before callback:', {
-    id: req.sessionID,
-    codeVerifier: req.session.codeVerifier
-  });
+  // Debugging: Log session details before processing
+  console.log("🔵 Session BEFORE callback:", req.session);
 
-  const codeVerifier = req.session.codeVerifier;
-  
+  const codeVerifier = req.session?.codeVerifier;
   if (!codeVerifier) {
-    // More detailed error handling
-    console.error('Code verifier missing or expired', {
+    console.error("❌ Code verifier missing or session expired!", {
       sessionId: req.sessionID,
-      sessionCookie: req.headers.cookie
+      sessionData: req.session,
     });
 
-    return res.redirect(`${FRONTEND_URL}`);
+    return res.redirect(FRONTEND_URL);
   }
 
   try {
+    // Exchange the code for an access token
     const params = new URLSearchParams();
-    params.append('grant_type', 'authorization_code');
-    params.append('code', code);
-    params.append('client_id', CLIENT_ID);
-    params.append('redirect_uri', REDIRECT_URI);
-    params.append('code_verifier', codeVerifier);
+    params.append("grant_type", "authorization_code");
+    params.append("code", code);
+    params.append("client_id", CLIENT_ID);
+    params.append("redirect_uri", REDIRECT_URI);
+    params.append("code_verifier", codeVerifier);
 
-    const response = await axios.post(
-      'https://lichess.org/api/token',
-      params,
-      {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      }
-    );
+    const tokenResponse = await axios.post("https://lichess.org/api/token", params, {
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    });
 
-    const accessToken = response.data.access_token;
+    console.log("🟢 Lichess Token Response:", tokenResponse.data);
 
-    const userRes = await axios.get('https://lichess.org/api/account', {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
+    const accessToken = tokenResponse.data.access_token;
+    if (!accessToken) {
+      throw new Error("Lichess authentication failed: No access token received.");
+    }
+
+    // Fetch user details from Lichess
+    const userRes = await axios.get("https://lichess.org/api/account", {
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
 
     const { username, email: lichessEmail } = userRes.data;
+    console.log("🟢 Lichess User:", userRes.data);
 
-    // More robust user finding/creation
-    let user = await User.findOne({ 
+    // Find or create the user
+    let user = await User.findOne({
       $or: [
         { lichessUsername: username },
-        { email: lichessEmail || `${username}@lichess.org` }
-      ]
+        { email: lichessEmail || `${username}@lichess.org` },
+      ],
     });
 
     if (!user) {
-      user = new User({ 
+      user = new User({
         fullName: username,
         email: lichessEmail || `${username}@lichess.org`,
-        password: await bcrypt.hash(crypto.randomBytes(20).toString('hex'), 10),
-        lichessUsername: username, 
+        password: await bcrypt.hash(crypto.randomBytes(20).toString("hex"), 10),
+        lichessUsername: username,
         lichessAccessToken: accessToken,
-        isVerified: false // Default to unverified
+        isVerified: false,
       });
     } else {
-      // Update existing user's Lichess details
       user.lichessAccessToken = accessToken;
       user.lichessUsername = username;
     }
@@ -214,28 +207,28 @@ exports.handleCallback = async (req, res) => {
     // Clear the used code verifier
     req.session.codeVerifier = null;
 
-    // Set user session with additional security
+    // Set user session
     req.session.userId = user._id;
     req.session.isLoggedIn = true;
-    req.session.loginMethod = 'lichess';
+    req.session.loginMethod = "lichess";
 
-    // Redirect to frontend with a success flag
-    res.redirect(`${FRONTEND_URL}`);
+    // Force session save before redirecting
+    await new Promise((resolve) => req.session.save(resolve));
 
+    console.log("🟢 Session AFTER callback:", req.session);
+
+    // Redirect to frontend with success flag
+    return res.redirect(FRONTEND_URL);
   } catch (err) {
-    console.error('Lichess Authentication Error:', {
+    console.error("❌ Lichess Authentication Error:", {
       message: err.message,
       response: err.response?.data,
-      stack: err.stack
+      stack: err.stack,
     });
 
-    res.status(500).json({ 
-      success: false, 
-      error: 'Authentication failed. Please try again.' 
-    });
+    return res.status(500).json({ success: false, error: "Authentication failed. Please try again." });
   }
 };
-
 
 exports.getUserProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.session.userId || req.user.id)
