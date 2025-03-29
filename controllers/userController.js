@@ -137,7 +137,7 @@ exports.handleCallback = async (req, res) => {
 
     if (!code || !codeVerifier) {
       console.error("❌ Code verifier missing or cookie expired!");
-      return res.redirect(`${FRONTEND_URL}/login?error=auth_failed`);
+      (`${FRONTEND_URL}/onboarding?error=missing_code_verifier`);
     }
 
     // Exchange the code for an access token
