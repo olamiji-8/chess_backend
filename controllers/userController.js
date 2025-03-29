@@ -137,10 +137,10 @@ exports.handleCallback = async (req, res) => {
 
     if (!code || !codeVerifier) {
       console.error("❌ Code verifier missing or cookie expired!");
-      (`${FRONTEND_URL}/onboarding?error=missing_code_verifier`);
+      return res.redirect(`${FRONTEND_URL}/onboarding?error=missing_code_verifier`);
     }
 
-    // Exchange the code for an access token
+    // Exchange the code for an access token - this is likely slow
     const params = new URLSearchParams();
     params.append("grant_type", "authorization_code");
     params.append("code", code);
@@ -148,57 +148,55 @@ exports.handleCallback = async (req, res) => {
     params.append("redirect_uri", REDIRECT_URI);
     params.append("code_verifier", codeVerifier);
 
+    // Set a timeout for the token request
     const tokenResponse = await axios.post("https://lichess.org/api/token", params, {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      timeout: 5000 // Add a 5 second timeout
     });
-
-    console.log("🟢 Lichess Token Response:", tokenResponse.data);
 
     const accessToken = tokenResponse.data.access_token;
     if (!accessToken) {
       throw new Error("Lichess authentication failed: No access token received.");
     }
 
-    // Fetch user details from Lichess
+    // Fetch user details - another potential slowdown
     const userRes = await axios.get("https://lichess.org/api/account", {
       headers: { Authorization: `Bearer ${accessToken}` },
+      timeout: 5000 // Add a 5 second timeout
     });
 
     const { username, email: lichessEmail } = userRes.data;
-    console.log("🟢 Lichess User:", userRes.data);
 
-    // Find or create the user
-    let user = await User.findOne({
-      $or: [
-        { lichessUsername: username },
-        { email: lichessEmail || `${username}@lichess.org` },
-      ],
-    });
+    // Use findOneAndUpdate instead of find + save to reduce DB operations
+    const user = await User.findOneAndUpdate(
+      {
+        $or: [
+          { lichessUsername: username },
+          { email: lichessEmail || `${username}@lichess.org` },
+        ],
+      },
+      {
+        $setOnInsert: {
+          fullName: username,
+          email: lichessEmail || `${username}@lichess.org`,
+          password: await bcrypt.hash(crypto.randomBytes(20).toString("hex"), 10),
+          isVerified: false
+        },
+        $set: {
+          lichessUsername: username,
+          lichessAccessToken: accessToken
+        }
+      },
+      { upsert: true, new: true }
+    );
 
-    if (!user) {
-      user = new User({
-        fullName: username,
-        email: lichessEmail || `${username}@lichess.org`,
-        password: await bcrypt.hash(crypto.randomBytes(20).toString("hex"), 10),
-        lichessUsername: username,
-        lichessAccessToken: accessToken,
-        isVerified: false,
-      });
-    } else {
-      user.lichessAccessToken = accessToken;
-      user.lichessUsername = username;
-    }
-
-    await user.save();
-
-    // Clear the used code verifier cookie
+    // Clear the code verifier cookie
     res.clearCookie('codeVerifier');
 
     // Generate JWT token
     const token = generateToken(user._id);
 
-    // Redirect to frontend with JWT token in query param
-    // The frontend should extract this and store it
+    // Redirect to frontend with JWT token
     return res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}`);
   } catch (error) {
     console.error("❌ Lichess Authentication Error:", {
@@ -207,7 +205,7 @@ exports.handleCallback = async (req, res) => {
       stack: error.stack,
     });
 
-    return res.redirect(`${FRONTEND_URL}/login?error=auth_failed`);
+    return res.redirect(`${FRONTEND_URL}/login?error=auth_failed&message=${encodeURIComponent(error.message)}`);
   }
 };
 
