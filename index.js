@@ -3,140 +3,53 @@ const cors = require('cors');
 const morgan = require('morgan');
 const path = require('path');
 const multer = require('multer');
-const session = require('express-session');
-const MongoStore = require('connect-mongo');
-const passport = require('passport');
+const passport = require('./config/passport');
 const dbconnect = require('./config/dbconnect');
 require('dotenv').config();
-require('./config/passport');
 const jwt = require('jsonwebtoken');
-const SECRET_KEY = process.env.JWT_SECRET; 
+const SECRET_KEY = process.env.JWT_SECRET || 'your-secret-key';
 
 // Initialize Express
 const app = express();
 
-// Enhanced Logging Middleware for Cookies and Sessions
+// Enhanced Logging Middleware
 app.use((req, res, next) => {
-  // Log incoming request cookies
-  console.log('Incoming Request Cookies:', req.headers.cookie || 'No cookies');
+  // Log incoming request headers
+  console.log('Incoming Request Headers:', {
+    authorization: req.headers.authorization ? 'Bearer [REDACTED]' : 'None',
+    origin: req.headers.origin
+  });
   
-  // Capture and log cookie setting
-  const originalSetCookie = res.setHeader;
-  res.setHeader = function(name, value) {
-    if (name === 'Set-Cookie') {
-      console.log('Setting Cookie:', value);
-    }
-    return originalSetCookie.apply(this, arguments);
-  };
-
   next();
 });
 
 // CORS Configuration
-// const corsOptions = {
-//   origin: [
-//     process.env.FRONTEND_URL, 
-//     'http://localhost:3000', 
-//     'https://sport64sqrs.vercel.app'
-//   ],
-//   credentials: true,
-//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-//   allowedHeaders: ['Content-Type', 'Authorization'],
-//   optionsSuccessStatus: 200
-// };
-
 const corsOptions = {
-  origin: 'https://sport64sqrs.vercel.app', // Allow frontend domain
-  credentials: true, // Required for cookies
+  origin: [
+    process.env.FRONTEND_URL, 
+    'http://localhost:3000', 
+    'https://sport64sqrs.vercel.app'
+  ],
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 200
 };
 
-app.use(cors(corsOptions));
-
-
-// Middleware
 app.use(cors(corsOptions));
 app.use(morgan('dev')); // Logging middleware
 app.use(express.json()); // Parse JSON bodies
 app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 
+// Cookie parser (for Lichess auth only)
+const cookieParser = require('cookie-parser');
+app.use(cookieParser(process.env.COOKIE_SECRET || 'cookie-secret-key'));
+
 // Connect to database
 dbconnect();
 
-// // Adaptive Session Configuration
-// function getSessionConfig() {
-//   const isProduction = process.env.NODE_ENV === 'production';
-
-//   const baseSessionConfig = {
-//     secret: process.env.SESSION_SECRET || 'fallback-secret-key',
-//     resave: false,
-//     saveUninitialized: false,
-//     store: MongoStore.create({ 
-//       mongoUrl: process.env.MONGODB_URL,
-//       collectionName: 'sessions',
-//       ttl: 14 * 24 * 60 * 60 // 14 days
-//     }),
-//     cookie: {
-//       secure: isProduction, // Secure in production
-//       httpOnly: true,
-//       sameSite: isProduction ? 'none' : 'lax',
-//       maxAge: 14 * 24 * 60 * 60 * 1000, // 14 days
-//        domain: isProduction ? new URL(process.env.FRONTEND_URL).hostname : 'localhost',
-//       path: '/'
-//     }
-//   };
-
-//   return baseSessionConfig;
-// }
-
-// // Middleware setup
-// const sessionConfig = getSessionConfig();
-// app.use(session(sessionConfig));
-
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'your-secret-key',
-  resave: false,
-  saveUninitialized: false,
-  store: MongoStore.create({ 
-    mongoUrl: process.env.MONGODB_URL,
-    collectionName: 'sessions',
-    ttl: 14 * 24 * 60 * 60 // 14 days
-  }),
-  cookie: {
-    secure: process.env.NODE_ENV === 'production', // Only secure in production
-    httpOnly: true,    // Prevent client-side access
-    sameSite: 'none',  // Required for cross-origin cookies
-    domain: '.sport64sqrs.vercel.app',  // Match frontend domain
-    maxAge: 14 * 24 * 60 * 60 * 1000, // 14 days
-  }
-}));
-
-
-// Additional Session Logging Middleware
-app.use((req, res, next) => {
-  // Log session details
-  if (req.session) {
-    console.log('Session Details:', {
-      id: req.sessionID,
-      userId: req.session.userId,
-      isLoggedIn: req.session.isLoggedIn,
-      loginMethod: req.session.loginMethod,
-      cookieConfig: req.session.cookie ? {
-        secure: req.session.cookie.secure,
-        httpOnly: req.session.cookie.httpOnly,
-        sameSite: req.session.cookie.sameSite,
-        maxAge: req.session.cookie.maxAge
-      } : 'No cookie configuration'
-    });
-  }
-
-  next();
-});
-
-// Passport initialization
+// Passport initialization - only initialize, no session
 app.use(passport.initialize());
-app.use(passport.session());
 
 // Configure multer for file uploads to /tmp directory
 const storage = multer.diskStorage({
@@ -174,23 +87,31 @@ app.use('/api/contact', contactRoutes);
 app.use('/api/users/verification', verificationRoutes);
 app.use('/api/admin', adminRoutes);
 
-// Enhanced session debugging endpoints
-app.get('/api/session-debug', (req, res) => {
-  res.json({
-    environment: process.env.NODE_ENV || 'development',
-    sessionID: req.sessionID,
-    isAuthenticated: req.isAuthenticated(),
-    user: req.user ? {
-      id: req.user._id,
-      email: req.user.email,
-      roles: req.user.roles
-    } : null,
-    sessionConfig: {
-      secure: req.session.cookie.secure,
-      sameSite: req.session.cookie.sameSite,
-      domain: req.session.cookie.domain
-    }
-  });
+// JWT Authentication debug endpoint
+app.get('/api/auth-status', (req, res) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  
+  if (!token) {
+    return res.json({
+      isLoggedIn: false,
+      message: 'No token provided'
+    });
+  }
+  
+  try {
+    const decoded = jwt.verify(token, SECRET_KEY);
+    res.json({
+      isLoggedIn: true,
+      userId: decoded.userId,
+      expiresAt: new Date(decoded.exp * 1000).toISOString()
+    });
+  } catch (error) {
+    res.json({
+      isLoggedIn: false,
+      message: 'Invalid or expired token',
+      error: error.message
+    });
+  }
 });
 
 // Basic route
@@ -202,22 +123,6 @@ app.get('/', (req, res) => {
       enabled: true,
       loginEndpoint: '/api/users/login'
     }
-  });
-});
-
-// Enhanced session status route
-app.get('/api/session-status', (req, res) => {
-  res.json({
-    isLoggedIn: req.isAuthenticated(),
-    userId: req.user ? req.user._id : null,
-    hasLichessToken: !!req.session.lichessAccessToken,
-    sessionID: req.sessionID,
-    user: req.user ? {
-      _id: req.user._id,
-      username: req.user.username,
-      email: req.user.email,
-      role: req.user.role
-    } : null
   });
 });
 
@@ -236,33 +141,6 @@ app.use((err, req, res, next) => {
     message: process.env.NODE_ENV === 'development' ? err.message : 'Internal Server Error',
     stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
   });
-});
-
-app.get('/api/users/session', (req, res) => {
-  if (req.session && req.session.isLoggedIn) {
-    return res.json({
-      isLoggedIn: true,
-      userId: req.session.userId,
-      loginMethod: req.session.loginMethod
-    });
-  }
-
-  // If session does not exist, check JWT token
-  const token = req.headers.authorization?.split(" ")[1]; // Extract token from "Bearer <token>"
-  if (token) {
-    jwt.verify(token, SECRET_KEY, (err, decoded) => {
-      if (err) {
-        return res.status(401).json({ message: "Invalid token" });
-      }
-      res.json({
-        isLoggedIn: true,
-        userId: decoded.userId,
-        loginMethod: 'jwt'
-      });
-    });
-  } else {
-    res.json({ isLoggedIn: false });
-  }
 });
 
 // 404 Not Found Handler

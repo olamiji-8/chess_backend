@@ -15,6 +15,9 @@ const CLIENT_ID = process.env.LICHESS_CLIENT_ID;
 const REDIRECT_URI = process.env.LICHESS_REDIRECT_URI || 'http://localhost:5000/api/users/callback';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 const SECRET_KEY = process.env.JWT_SECRET || 'your-secret-key';
+const TOKEN_EXPIRY = '7d'; // Token expires in 7 days
+
+
 
 // @desc    Register a new user
 // @route   POST /api/users/register
@@ -31,7 +34,6 @@ exports.registerUser = asyncHandler(async (req, res) => {
   }
 
   // Generate default PIN for registration
-  // This is temporary and user will be prompted to change it later
   const defaultPin = Math.floor(1000 + Math.random() * 9000).toString();
   const salt = await bcrypt.genSalt(10);
   const hashedPin = await bcrypt.hash(defaultPin, salt);
@@ -45,26 +47,19 @@ exports.registerUser = asyncHandler(async (req, res) => {
   });
 
   if (user) {
-    // Set session
-    req.session.userId = user._id;
-    req.session.isLoggedIn = true;
-
-    // Save session explicitly
-    req.session.save((err) => {
-      if (err) {
-        console.error('Session save error:', err);
-      }
-      
-      res.status(201).json({
-        success: true,
-        data: {
-          id: user._id,
-          fullName: user.fullName,
-          email: user.email,
-          isVerified: user.isVerified
-        },
-        message: 'Registration successful. Please set your PIN for transactions.'
-      });
+    // Generate JWT token
+    const token = generateToken(user._id);
+    
+    res.status(201).json({
+      success: true,
+      data: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        isVerified: user.isVerified,
+        token
+      },
+      message: 'Registration successful. Please set your PIN for transactions.'
     });
   } else {
     res.status(400);
@@ -87,26 +82,19 @@ exports.loginUser = asyncHandler(async (req, res) => {
     throw new Error('Invalid email or password');
   }
 
-  // Set session
-  req.session.userId = user._id;
-  req.session.isLoggedIn = true;
-
-  // Save session explicitly
-  req.session.save((err) => {
-    if (err) {
-      console.error('Session save error:', err);
+  // Generate JWT token
+  const token = generateToken(user._id);
+  
+  res.status(200).json({
+    success: true,
+    data: {
+      id: user._id,
+      fullName: user.fullName,
+      email: user.email,
+      isVerified: user.isVerified,
+      lichessUsername: user.lichessUsername,
+      token
     }
-    
-    res.status(200).json({
-      success: true,
-      data: {
-        id: user._id,
-        fullName: user.fullName,
-        email: user.email,
-        isVerified: user.isVerified,
-        lichessUsername: user.lichessUsername
-      }
-    });
   });
 });
 
@@ -114,20 +102,26 @@ exports.loginUser = asyncHandler(async (req, res) => {
 // @route   GET /api/users/logout
 // @access  Private
 exports.logoutUser = asyncHandler(async (req, res) => {
-  req.session.destroy((err) => {
-    if (err) {
-      return res.status(500).json({ message: 'Logout failed' });
-    }
-    res.clearCookie('connect.sid');
-    res.status(200).json({ success: true, message: 'Logged out successfully' });
-  });
+  // With JWT, logout happens client-side by removing the token
+  res.status(200).json({ success: true, message: 'Logged out successfully' });
 });
 
+// Helper function to generate JWT token
+const generateToken = (userId) => {
+  return jwt.sign({ userId }, SECRET_KEY, { expiresIn: TOKEN_EXPIRY });
+};
+
+// Redirect to Lichess OAuth with PKCE
 exports.loginWithLichess = (req, res) => {
   const pkce = generatePKCE();
   
-  // Store in session instead of global variable
-  req.session.codeVerifier = pkce.codeVerifier;
+  // Store code verifier in a cookie (signed for security)
+  res.cookie('codeVerifier', pkce.codeVerifier, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    signed: true,
+    maxAge: 10 * 60 * 1000 // 10 minutes
+  });
   
   const authUrl = `https://lichess.org/oauth?response_type=code&client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&code_challenge_method=S256&code_challenge=${pkce.codeChallenge}&scope=preference:read`;
 
@@ -135,19 +129,16 @@ exports.loginWithLichess = (req, res) => {
   res.redirect(authUrl);
 };
 
+// Handle callback from Lichess
 exports.handleCallback = async (req, res) => {
   try {
     const { code } = req.query;
+    const codeVerifier = req.signedCookies?.codeVerifier;
 
-    if (!code || !req.session?.codeVerifier) {
-      console.error("❌ Code verifier missing or session expired!", {
-        sessionId: req.sessionID,
-        sessionData: req.session,
-      });
-      return res.redirect(FRONTEND_URL);
+    if (!code || !codeVerifier) {
+      console.error("❌ Code verifier missing or cookie expired!");
+      return res.redirect(`${FRONTEND_URL}/login?error=auth_failed`);
     }
-
-    console.log("🔵 Session BEFORE callback:", req.session);
 
     // Exchange the code for an access token
     const params = new URLSearchParams();
@@ -155,7 +146,7 @@ exports.handleCallback = async (req, res) => {
     params.append("code", code);
     params.append("client_id", CLIENT_ID);
     params.append("redirect_uri", REDIRECT_URI);
-    params.append("code_verifier", req.session.codeVerifier);
+    params.append("code_verifier", codeVerifier);
 
     const tokenResponse = await axios.post("https://lichess.org/api/token", params, {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -200,28 +191,15 @@ exports.handleCallback = async (req, res) => {
 
     await user.save();
 
-    // Clear the used code verifier
-    req.session.codeVerifier = null;
+    // Clear the used code verifier cookie
+    res.clearCookie('codeVerifier');
 
-    // ✅ Store session
-    req.session.userId = user._id;
-    req.session.isLoggedIn = true;
-    req.session.loginMethod = "lichess";
+    // Generate JWT token
+    const token = generateToken(user._id);
 
-    // ✅ Generate JWT token
-    const token = jwt.sign(
-      { userId: user._id },
-      SECRET_KEY,
-      { expiresIn: "7d" } // Token valid for 7 days
-    );
-
-    // ✅ Force session save before redirecting
-    await new Promise((resolve) => req.session.save(resolve));
-
-    console.log("🟢 Session AFTER callback:", req.session);
-
-    // ✅ Redirect frontend with JWT
-    return res.redirect(FRONTEND_URL);
+    // Redirect to frontend with JWT token in query param
+    // The frontend should extract this and store it
+    return res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}`);
   } catch (error) {
     console.error("❌ Lichess Authentication Error:", {
       message: error.message,
@@ -229,12 +207,14 @@ exports.handleCallback = async (req, res) => {
       stack: error.stack,
     });
 
-    return res.status(500).json({ success: false, error: "Authentication failed. Please try again." });
+    return res.redirect(`${FRONTEND_URL}/login?error=auth_failed`);
   }
 };
 
+
 exports.getUserProfile = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.session.userId || req.user.id)
+  // Use req.user which is set by the JWT authentication middleware
+  const user = await User.findById(req.user._id)
     .populate('registeredTournaments', 'title startDate status')
     .populate('createdTournaments', 'title startDate status');
   
@@ -325,7 +305,7 @@ exports.verifyBankAccount = asyncHandler(async (req, res) => {
 // @route   PUT /api/users/profile
 // @access  Private
 exports.updateUserProfile = asyncHandler(async (req, res) => {
-  const userId = req.session.userId || req.user.id;
+  const userId = req.user.id;
   const user = await User.findById(userId);
   
   if (!user) {
@@ -429,7 +409,7 @@ exports.updateUserProfile = asyncHandler(async (req, res) => {
 // @access  Private
 exports.updatePin = asyncHandler(async (req, res) => {
   const { currentPin, newPin, confirmPin } = req.body;
-  const userId = req.session.userId || req.user.id;
+  const userId = req.user.id;
   
   const user = await User.findById(userId).select('+pin');
   
@@ -477,7 +457,7 @@ exports.updatePin = asyncHandler(async (req, res) => {
 // @access  Private
 exports.verifyPin = asyncHandler(async (req, res) => {
   const { pin } = req.body;
-  const userId = req.session.userId || req.user.id;
+  const userId = req.user.id;
   
   const pinVerification = await verifyUserPin(userId, pin);
   
@@ -491,7 +471,7 @@ exports.verifyPin = asyncHandler(async (req, res) => {
 // @route   GET /api/users/check-pin-status
 // @access  Private
 exports.checkPinStatus = asyncHandler(async (req, res) => {
-  const userId = req.session.userId || req.user.id;
+  const userId = req.user.id;
   const user = await User.findById(userId);
   
   if (!user) {
@@ -514,7 +494,7 @@ exports.checkPinStatus = asyncHandler(async (req, res) => {
 // @access  Private
 exports.submitVerificationRequest = asyncHandler(async (req, res) => {
   const { fullName, address, idType } = req.body;
-  const userId = req.session.userId || req.user.id;
+  const userId = req.user.id;
   
   // Validate required fields
   if (!fullName || !address || !idType) {
@@ -584,7 +564,7 @@ exports.submitVerificationRequest = asyncHandler(async (req, res) => {
 // @route   GET /api/users/verification/status
 // @access  Private
 exports.getVerificationStatus = asyncHandler(async (req, res) => {
-  const userId = req.session.userId || req.user.id;
+  const userId = req.user.id;
   
   const user = await User.findById(userId);
   
