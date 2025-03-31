@@ -3,6 +3,29 @@ const router = express.Router();
 const userController = require('../controllers/userController');
 const { protect } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
+const multer = require('multer');
+
+// File upload error handling middleware
+const handleUploadError = (req, res, next) => {
+  return (err) => {
+    if (err instanceof multer.MulterError) {
+      // A Multer error occurred when uploading
+      return res.status(400).json({
+        success: false,
+        message: `Upload error: ${err.message}`
+      });
+    } else if (err) {
+      // An unknown error occurred
+      return res.status(500).json({
+        success: false,
+        message: err.message || 'File upload failed'
+      });
+    }
+    // If no error, continue
+    next();
+  };
+};
+
 
 // Public routes
 router.post('/register', userController.registerUser);
