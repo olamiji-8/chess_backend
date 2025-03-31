@@ -81,69 +81,143 @@ exports.initiateDeposit = asyncHandler(async (req, res) => {
 });
 
 
-// // @desc    Handle Paystack webhook
-// // @route   POST /api/wallet/webhook
-// // @access  Public
-// exports.handlePaystackWebhook = asyncHandler(async (req, res) => {
-//   // Verify that the request is from Paystack
-//   const hash = crypto
-//     .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
-//     .update(JSON.stringify(req.body))
-//     .digest('hex');
+// @desc    Handle Paystack webhook
+// @route   POST /api/wallet/webhook
+// @access  Public
+exports.handlePaystackWebhook = asyncHandler(async (req, res) => {
+  // Verify that the request is from Paystack
+  const hash = crypto
+    .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+    .update(JSON.stringify(req.body))
+    .digest('hex');
   
-//   if (hash !== req.headers['x-paystack-signature']) {
-//     return res.status(401).json({ message: 'Invalid signature' });
-//   }
+  if (hash !== req.headers['x-paystack-signature']) {
+    console.error('Invalid webhook signature');
+    return res.status(401).json({ message: 'Invalid signature' });
+  }
   
-//   // Process the webhook payload
-//   const event = req.body;
+  // Process the webhook payload
+  const event = req.body;
   
-//   // Handle the event based on its type
-//   switch(event.event) {
-//     case 'charge.success':
-//       // Extract the reference and verify transaction
-//       const { reference, status, amount } = event.data;
+  // Handle the event based on its type
+  switch(event.event) {
+    case 'charge.success':
+      // Extract the reference and verify transaction
+      const { reference, status, amount } = event.data;
       
-//       // Find the transaction in our database
-//       const transaction = await Transaction.findOne({ reference });
+      // Find the transaction in our database
+      const transaction = await Transaction.findOne({ reference });
       
-//       if (!transaction) {
-//         // Log the issue but return 200 to acknowledge receipt
-//         console.error(`Transaction with reference ${reference} not found`);
-//         return res.sendStatus(200);
-//       }
+      if (!transaction) {
+        // Log the issue but return 200 to acknowledge receipt
+        console.error(`Transaction with reference ${reference} not found`);
+        return res.sendStatus(200);
+      }
       
-//       // If transaction already completed, just acknowledge
-//       if (transaction.status === 'completed') {
-//         return res.sendStatus(200);
-//       }
+      // If transaction already completed, just acknowledge
+      if (transaction.status === 'completed') {
+        return res.sendStatus(200);
+      }
       
-//       // Update transaction status
-//       if (status === 'success') {
-//         transaction.status = 'completed';
-//         await transaction.save();
+      // Update transaction status
+      if (status === 'success') {
+        transaction.status = 'completed';
+        await transaction.save();
         
-//         // Update user wallet balance
-//         const user = await User.findById(transaction.user);
-//         user.walletBalance += (amount / 100); // Convert from kobo to naira
-//         await user.save();
+        // Update user wallet balance
+        const user = await User.findById(transaction.user);
+        user.walletBalance += (amount / 100); // Convert from kobo to naira
+        await user.save();
         
-//         console.log(`Deposit successful: ${amount / 100} naira added to user ${user._id}`);
-//       } else {
-//         transaction.status = 'failed';
-//         await transaction.save();
-//         console.log(`Payment verification failed for reference ${reference}`);
-//       }
-//       break;
+        console.log(`Deposit successful: ${amount / 100} naira added to user ${user._id}`);
+      } else {
+        transaction.status = 'failed';
+        await transaction.save();
+        console.log(`Payment verification failed for reference ${reference}`);
+      }
+      break;
       
-//     case 'transfer.success':
-//       // Handle successful withdrawal transfers if you implement Paystack transfers
-//       // Similar logic to above but for withdrawal transactions
-//       break;
+    case 'transfer.success':
+      // Handle successful withdrawal transfers
+      const transferData = event.data;
+      const withdrawalTransaction = await Transaction.findOne({ 
+        reference: transferData.reference,
+        type: 'withdrawal'
+      });
       
-//     case 'transfer.failed':
-//       // Handle failed withdrawal transfers
-//       break;
+      if (!withdrawalTransaction) {
+        console.error(`Withdrawal transaction with reference ${transferData.reference} not found`);
+        return res.sendStatus(200);
+      }
+      
+      // Update transaction status if not already completed
+      if (withdrawalTransaction.status !== 'completed') {
+        withdrawalTransaction.status = 'completed';
+        await withdrawalTransaction.save();
+        console.log(`Withdrawal successful: ${transferData.amount / 100} naira transferred to user ${withdrawalTransaction.user}`);
+      }
+      break;
+      
+    case 'transfer.failed':
+      // Handle failed withdrawal transfers
+      const failedTransferData = event.data;
+      const failedWithdrawalTransaction = await Transaction.findOne({ 
+        reference: failedTransferData.reference,
+        type: 'withdrawal'
+      });
+      
+      if (!failedWithdrawalTransaction) {
+        console.error(`Failed withdrawal transaction with reference ${failedTransferData.reference} not found`);
+        return res.sendStatus(200);
+      }
+      
+      // Update transaction status and refund user
+      if (failedWithdrawalTransaction.status !== 'failed') {
+        failedWithdrawalTransaction.status = 'failed';
+        await failedWithdrawalTransaction.save();
+        
+        // Refund user's wallet
+        const userToRefund = await User.findById(failedWithdrawalTransaction.user);
+        userToRefund.walletBalance += failedWithdrawalTransaction.amount;
+        await userToRefund.save();
+        
+        console.log(`Withdrawal failed: ${failedWithdrawalTransaction.amount} naira refunded to user ${failedWithdrawalTransaction.user}`);
+      }
+      break;
+
+    case 'charge.dispute.create':
+      // Handle disputes (chargebacks)
+      const disputeData = event.data;
+      const disputedTransaction = await Transaction.findOne({ reference: disputeData.reference });
+      
+      if (disputedTransaction) {
+        // You might want to create a new transaction type for disputes
+        // Or add a note to the existing transaction
+        disputedTransaction.status = 'disputed';
+        disputedTransaction.details = {
+          ...disputedTransaction.details,
+          dispute: {
+            id: disputeData.id,
+            status: disputeData.status,
+            category: disputeData.category,
+            amount: disputeData.amount
+          }
+        };
+        await disputedTransaction.save();
+        
+        console.log(`Transaction ${disputeData.reference} has been disputed`);
+      }
+      break;
+      
+    default:
+      // Log unknown event types for future implementation
+      console.log(`Unhandled webhook event: ${event.event}`);
+      break;
+  }
+  
+  // Always acknowledge receipt of the webhook
+  return res.sendStatus(200);
+});
 
 // @desc    Verify deposit callback
 // @route   GET /api/wallet/verify/:reference

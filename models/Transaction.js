@@ -12,7 +12,7 @@ const TransactionSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['deposit', 'withdrawal', 'tournament_entry', 'tournament_funding', 'prize_payout'],
+    enum: ['deposit', 'withdrawal', 'tournament_entry', 'tournament_funding', 'prize_payout', 'refund'],
     required: true
   },
   amount: {
@@ -20,7 +20,9 @@ const TransactionSchema = new mongoose.Schema({
     required: true
   },
   reference: {
-    type: String
+    type: String,
+    required: true,
+    unique: true
   },
   paymentMethod: {
     type: String,
@@ -28,13 +30,40 @@ const TransactionSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'completed', 'failed'],
+    enum: ['pending', 'completed', 'failed', 'disputed', 'refunded'],
     default: 'pending'
+  },
+  details: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
+  },
+  metadata: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
+  },
+  webhookData: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
+  },
+  lastUpdated: {
+    type: Date,
+    default: Date.now
   },
   createdAt: {
     type: Date,
     default: Date.now
   }
+});
+
+// Add index for faster queries
+TransactionSchema.index({ reference: 1 });
+TransactionSchema.index({ user: 1, createdAt: -1 });
+TransactionSchema.index({ status: 1, type: 1 });
+
+// Update lastUpdated timestamp when transaction is modified
+TransactionSchema.pre('save', function(next) {
+  this.lastUpdated = Date.now();
+  next();
 });
 
 module.exports = mongoose.model('Transaction', TransactionSchema);
