@@ -491,116 +491,68 @@ exports.checkPinStatus = asyncHandler(async (req, res) => {
 // @route   POST /api/users/verification/submit
 // @access  Private
 exports.submitVerificationRequest = asyncHandler(async (req, res) => {
-  const { fullName, address, idType } = req.body;
-  const userId = req.user.id;
+  console.log('Controller started');
+  console.log('Request body:', req.body);
+  console.log('Files received:', req.files ? Object.keys(req.files) : 'No files');
   
-  // Validate required fields
-  if (!fullName || !address || !idType) {
+  const { fullName, address, idType, idNumber } = req.body;
+  
+  if (!fullName || !address || !idType || !idNumber) {
     return res.status(400).json({ message: 'Please provide all required fields' });
   }
   
-  // Validate ID type is from the allowed categories
-  const allowedIdTypes = ['driverLicense', 'internationalPassport', 'nationalID', 'nin', 'votersCard', 'other'];
-  if (!allowedIdTypes.includes(idType)) {
-    return res.status(400).json({ message: 'Invalid ID type. Please select from the available options.' });
-  }
-  
-  // Check file uploads
   if (!req.files || !req.files.idCard || !req.files.selfie) {
     return res.status(400).json({ message: 'Please upload both ID card and selfie images' });
   }
 
-  try {
-    const user = await User.findById(userId);
-    
-    // Check if user already has a pending verification request
-    const existingRequest = await VerificationRequest.findOne({ 
-      user: userId,
-      status: 'pending'
-    });
-    
-    if (existingRequest) {
-      return res.status(400).json({ 
-        message: 'You already have a pending verification request' 
-      });
-    }
-    
-    // Verify files exist before upload
-    const idCardPath = req.files.idCard[0].path;
-    const selfiePath = req.files.selfie[0].path;
-    
-    if (!fs.existsSync(idCardPath) || !fs.existsSync(selfiePath)) {
-      return res.status(500).json({ 
-        message: 'Error processing uploaded files. Please try again.' 
-      });
-    }
-    
-    // Upload ID card to cloudinary
-    const idCardResult = await cloudinary.uploader.upload(idCardPath, {
-      folder: 'verification/id_cards'
-    });
-    
-    // Upload selfie to cloudinary
-    const selfieResult = await cloudinary.uploader.upload(selfiePath, {
-      folder: 'verification/selfies'
-    });
-    
-    // Create verification request
-    const verificationRequest = await VerificationRequest.create({
-      user: userId,
-      fullName,
-      address,
-      idType,
-      idCardImage: idCardResult.secure_url,
-      selfieImage: selfieResult.secure_url,
-      status: 'pending'
-    });
-    
-    // Clean up local files after successful upload
-    try {
-      fs.unlinkSync(idCardPath);
-      fs.unlinkSync(selfiePath);
-    } catch (cleanupErr) {
-      console.error('Error removing temporary files:', cleanupErr);
-      // Non-blocking error, continue with the process
-    }
-    
-    res.status(201).json({
-      success: true,
-      message: 'Verification request submitted successfully. We will review your information and update your status.',
-      data: {
-        id: verificationRequest._id,
-        status: verificationRequest.status,
-        createdAt: verificationRequest.createdAt
-      }
-    });
-  } catch (error) {
-    console.error('Verification request error:', {
-      message: error.message,
-      stack: error.stack,
-      body: req.body,
-      files: req.files
-    });
-    
-    // Clean up any uploaded files in case of error
-    if (req.files) {
-      try {
-        if (req.files.idCard && req.files.idCard[0] && fs.existsSync(req.files.idCard[0].path)) {
-          fs.unlinkSync(req.files.idCard[0].path);
-        }
-        if (req.files.selfie && req.files.selfie[0] && fs.existsSync(req.files.selfie[0].path)) {
-          fs.unlinkSync(req.files.selfie[0].path);
-        }
-      } catch (cleanupErr) {
-        console.error('Error cleaning up files after error:', cleanupErr);
-      }
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: 'Error processing your verification request. Please try again.'
+  console.log('Validation passed, uploading to Cloudinary');
+  const user = await User.findById(req.user.id);
+  
+  // Check if user already has a pending verification request
+  const existingRequest = await VerificationRequest.findOne({ 
+    user: req.user.id,
+    status: 'pending'
+  });
+  
+  if (existingRequest) {
+    return res.status(400).json({ 
+      message: 'You already have a pending verification request' 
     });
   }
+  
+  // Upload ID card to cloudinary
+  const idCardResult = await cloudinary.uploader.upload(req.files.idCard[0].path, {
+    folder: 'verification/id_cards'
+  });
+  fs.unlinkSync(req.files.idCard[0].path);
+  
+  // Upload selfie to cloudinary
+  const selfieResult = await cloudinary.uploader.upload(req.files.selfie[0].path, {
+    folder: 'verification/selfies'
+  });
+  fs.unlinkSync(req.files.selfie[0].path);
+  
+  // Create verification request
+  const verificationRequest = await VerificationRequest.create({
+    user: req.user.id,
+    fullName,
+    address,
+    idType,
+    idNumber,
+    idCardImage: idCardResult.secure_url,
+    selfieImage: selfieResult.secure_url,
+    status: 'pending'
+  });
+  
+  res.status(201).json({
+    success: true,
+    message: 'Verification request submitted successfully',
+    data: {
+      id: verificationRequest._id,
+      status: verificationRequest.status,
+      createdAt: verificationRequest.createdAt
+    }
+  });
 });
 
 // @desc    Get verification status

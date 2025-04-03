@@ -19,7 +19,8 @@ router.get('/:id', getTournament);
 router.post('/', protect, upload.single('banner'), createTournament);
 router.post('/:id/register', protect, registerForTournament);
 
-router.get('/:id', getTournament);
+// router.get('/:id', getTournament);
 router.put('/:id/status', protect, updateTournamentStatus);
 
 module.exports = router;
+

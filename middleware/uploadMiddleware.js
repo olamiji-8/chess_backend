@@ -11,6 +11,10 @@ if (!fs.existsSync(uploadsDir)) {
 // Configure storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
+    // Double check directory exists before each upload
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
     cb(null, uploadsDir); // Use the tmp uploads directory
   },
   filename: (req, file, cb) => {
@@ -27,14 +31,14 @@ const fileFilter = (req, file, cb) => {
   if (mimetype && extname) {
     return cb(null, true);
   } else {
-    cb(new Error('Error: Images Only! (jpeg, jpg, png, gif,webp)'));
+    cb(new Error('Error: Images Only! (jpeg, jpg, png, gif, webp)'));
   }
 };
 
 // Initialize upload
 const upload = multer({
   storage,
-  limits: { fileSize: 1000000 }, // 1MB limit
+  limits: { fileSize: 5000000 }, 
   fileFilter
 });
 

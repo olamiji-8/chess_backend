@@ -16,12 +16,23 @@ const VerificationRequestSchema = new mongoose.Schema({
     required: [true, 'Address is required'],
     trim: true
   },
+  idType: {
+    type: String,
+    required: [true, 'ID type is required'],
+    enum: ['nationalId', 'driversLicense', 'passport', 'other'],
+    trim: true
+  },
+  idNumber: {
+    type: String,
+    required: [true, 'ID number/serial is required'],
+    trim: true
+  },
   idCardImage: {
-    type: String, // URL to the uploaded ID image
+    type: String,
     required: [true, 'ID card image is required']
   },
   selfieImage: {
-    type: String, // URL to the uploaded selfie
+    type: String,
     required: [true, 'Selfie image is required']
   },
   status: {
