@@ -9,115 +9,288 @@ const fs = require('fs');
 // @desc    Create a new tournament
 // @route   POST /api/tournaments
 // @access  Private
+// Enhanced createTournament controller with improved error handling
 exports.createTournament = asyncHandler(async (req, res) => {
-  const {
-    title,
-    category,
-    rules,
-    startDate,
-    startTime,
-    duration,
-    prizeType,
-    prizes,
-    entryFee,
-    fundingMethod,
-    password
-  } = req.body;
-
-  // Upload banner image to cloudinary
-  let bannerUrl = '';
-  if (req.file) {
-    const result = await cloudinary.uploader.upload(req.file.path, {
-      folder: 'tournament_banners'
-    });
-    bannerUrl = result.secure_url;
-    // Delete file from server after upload
-    fs.unlinkSync(req.file.path);
-  } else {
-    return res.status(400).json({ message: 'Please upload a tournament banner' });
-  }
-
-  // Calculate total prize pool
-  let totalPrizePool = 0;
-  if (prizeType === 'fixed') {
-    // Sum all fixed prizes
-    totalPrizePool = Object.values(prizes.fixed).reduce((sum, prize) => sum + (prize || 0), 0);
-  } else if (prizeType === 'percentage') {
-    // For percentage, we need to set a base prize pool
-    totalPrizePool = prizes.percentage.basePrizePool || 0;
-  } else if (prizeType === 'special') {
-    if (prizes.special.isFixed) {
-      // Calculate total from special prizes
-      totalPrizePool = prizes.special.specialPrizes.reduce((sum, prize) => sum + (prize.amount || 0), 0);
-    } else {
-      // For percentage-based special prizes, use the base prize pool
-      totalPrizePool = prizes.special.basePrizePool || 0;
-    }
-  }
-
-  // Check user wallet balance if funding from wallet
-  if (fundingMethod === 'wallet') {
-    const user = await User.findById(req.user.id);
-    if (user.walletBalance < totalPrizePool) {
+  try {
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    
+    const {
+      title,
+      category,
+      rules,
+      startDate,
+      startTime,
+      duration,
+      prizeType,
+      prizes,
+      entryFee,
+      fundingMethod,
+      password
+    } = req.body;
+    
+    // Validate required fields
+    if (!title || !category || !rules || !startDate || !startTime || !duration || !prizeType || !fundingMethod) {
       return res.status(400).json({ 
-        message: 'Insufficient wallet balance. Please top up or select another payment method',
-        walletBalance: user.walletBalance,
-        requiredAmount: totalPrizePool
+        message: 'Missing required fields',
+        missingFields: [
+          !title ? 'title' : null,
+          !category ? 'category' : null,
+          !rules ? 'rules' : null,
+          !startDate ? 'startDate' : null,
+          !startTime ? 'startTime' : null,
+          !duration ? 'duration' : null,
+          !prizeType ? 'prizeType' : null,
+          !fundingMethod ? 'fundingMethod' : null
+        ].filter(Boolean)
       });
     }
 
-    // Deduct from wallet
-    user.walletBalance -= totalPrizePool;
-    await user.save();
+    // Upload banner image to cloudinary
+    let bannerUrl = '';
+    if (req.file) {
+      try {
+        const result = await cloudinary.uploader.upload(req.file.path, {
+          folder: 'tournament_banners'
+        });
+        bannerUrl = result.secure_url;
+        // Delete file from server after upload
+        fs.unlinkSync(req.file.path);
+      } catch (cloudinaryError) {
+        console.error('Cloudinary upload error:', cloudinaryError);
+        return res.status(500).json({ 
+          message: 'Error uploading tournament banner',
+          error: cloudinaryError.message
+        });
+      }
+    } else {
+      return res.status(400).json({ message: 'Please upload a tournament banner' });
+    }
 
-    // Create transaction record
-    await Transaction.create({
-      user: req.user.id,
-      type: 'tournament_funding',
-      amount: totalPrizePool,
-      status: 'completed',
-      paymentMethod: 'wallet'
-    });
-  } else if (fundingMethod === 'topup') {
-    // Direct user to payment page to top up their wallet
-    return res.status(200).json({
-      success: false,
-      redirectToTopup: true,
-      amountNeeded: totalPrizePool,
-      message: 'Please complete the payment to fund your tournament'
+    // Initialize default prize structure based on prizeType
+    let normalizedPrizes = {};
+    
+    // Normalize prizes structure based on prizeType
+    if (prizeType === 'fixed') {
+      normalizedPrizes = {
+        fixed: {
+          first: 0,
+          second: 0,
+          third: 0,
+          fourth: 0,
+          fifth: 0,
+          additional: []
+        }
+      };
+      
+      // If prizes.fixed exists and is an object, try to extract values
+      if (prizes && prizes.fixed && typeof prizes.fixed === 'object') {
+        console.log('Prizes fixed object:', JSON.stringify(prizes.fixed));
+        
+        // Parse numeric values from the prizes.fixed object
+        if (prizes.fixed.first) normalizedPrizes.fixed.first = parseFloat(prizes.fixed.first) || 0;
+        if (prizes.fixed.second) normalizedPrizes.fixed.second = parseFloat(prizes.fixed.second) || 0;
+        if (prizes.fixed.third) normalizedPrizes.fixed.third = parseFloat(prizes.fixed.third) || 0;
+        if (prizes.fixed.fourth) normalizedPrizes.fixed.fourth = parseFloat(prizes.fixed.fourth) || 0;
+        if (prizes.fixed.fifth) normalizedPrizes.fixed.fifth = parseFloat(prizes.fixed.fifth) || 0;
+        
+        // Handle additional prizes if they exist
+        if (prizes.fixed.additional && Array.isArray(prizes.fixed.additional)) {
+          normalizedPrizes.fixed.additional = prizes.fixed.additional.map(prize => ({
+            position: parseInt(prize.position) || 0,
+            amount: parseFloat(prize.amount) || 0
+          }));
+        }
+      } else {
+        console.warn('Invalid or missing prizes.fixed structure');
+      }
+    } else if (prizeType === 'percentage') {
+      normalizedPrizes = {
+        percentage: {
+          basePrizePool: 0,
+          first: 0,
+          second: 0,
+          third: 0,
+          fourth: 0,
+          fifth: 0,
+          additional: []
+        }
+      };
+      
+      // Similar parsing for percentage prizes
+      if (prizes && prizes.percentage && typeof prizes.percentage === 'object') {
+        if (prizes.percentage.basePrizePool) normalizedPrizes.percentage.basePrizePool = parseFloat(prizes.percentage.basePrizePool) || 0;
+        if (prizes.percentage.first) normalizedPrizes.percentage.first = parseFloat(prizes.percentage.first) || 0;
+        if (prizes.percentage.second) normalizedPrizes.percentage.second = parseFloat(prizes.percentage.second) || 0;
+        if (prizes.percentage.third) normalizedPrizes.percentage.third = parseFloat(prizes.percentage.third) || 0;
+        if (prizes.percentage.fourth) normalizedPrizes.percentage.fourth = parseFloat(prizes.percentage.fourth) || 0;
+        if (prizes.percentage.fifth) normalizedPrizes.percentage.fifth = parseFloat(prizes.percentage.fifth) || 0;
+        
+        if (prizes.percentage.additional && Array.isArray(prizes.percentage.additional)) {
+          normalizedPrizes.percentage.additional = prizes.percentage.additional.map(prize => ({
+            position: parseInt(prize.position) || 0,
+            percentage: parseFloat(prize.percentage) || 0
+          }));
+        }
+      }
+    } else if (prizeType === 'special') {
+      normalizedPrizes = {
+        special: {
+          isFixed: true,
+          basePrizePool: 0,
+          specialPrizes: []
+        }
+      };
+      
+      if (prizes && prizes.special && typeof prizes.special === 'object') {
+        if (typeof prizes.special.isFixed === 'boolean') normalizedPrizes.special.isFixed = prizes.special.isFixed;
+        if (prizes.special.basePrizePool) normalizedPrizes.special.basePrizePool = parseFloat(prizes.special.basePrizePool) || 0;
+        
+        if (prizes.special.specialPrizes && Array.isArray(prizes.special.specialPrizes)) {
+          normalizedPrizes.special.specialPrizes = prizes.special.specialPrizes.map(prize => ({
+            category: prize.category || '',
+            amount: parseFloat(prize.amount) || 0,
+            isPercentage: prize.isPercentage === true
+          }));
+        }
+      }
+    }
+
+    console.log('Normalized prizes structure:', JSON.stringify(normalizedPrizes, null, 2));
+
+    // Calculate total prize pool
+    let totalPrizePool = 0;
+    try {
+      if (prizeType === 'fixed') {
+        // Sum all fixed prizes
+        totalPrizePool = normalizedPrizes.fixed.first + 
+                         normalizedPrizes.fixed.second + 
+                         normalizedPrizes.fixed.third + 
+                         normalizedPrizes.fixed.fourth + 
+                         normalizedPrizes.fixed.fifth;
+                         
+        // Add additional prizes if any
+        if (normalizedPrizes.fixed.additional && normalizedPrizes.fixed.additional.length) {
+          totalPrizePool += normalizedPrizes.fixed.additional.reduce((sum, prize) => sum + (prize.amount || 0), 0);
+        }
+      } else if (prizeType === 'percentage') {
+        // For percentage, we use the base prize pool
+        totalPrizePool = normalizedPrizes.percentage.basePrizePool || 0;
+      } else if (prizeType === 'special') {
+        if (normalizedPrizes.special.isFixed) {
+          // Calculate total from special prizes
+          totalPrizePool = normalizedPrizes.special.specialPrizes.reduce((sum, prize) => sum + (prize.amount || 0), 0);
+        } else {
+          // For percentage-based special prizes, use the base prize pool
+          totalPrizePool = normalizedPrizes.special.basePrizePool || 0;
+        }
+      }
+      
+      console.log('Calculated total prize pool:', totalPrizePool);
+    } catch (prizeCalcError) {
+      console.error('Error calculating prize pool:', prizeCalcError);
+      return res.status(400).json({ 
+        message: 'Error calculating prize pool',
+        error: prizeCalcError.message
+      });
+    }
+
+    // Check user wallet balance if funding from wallet
+    if (fundingMethod === 'wallet') {
+      try {
+        const user = await User.findById(req.user.id);
+        if (!user) {
+          return res.status(404).json({ message: 'User not found' });
+        }
+        
+        if (user.walletBalance < totalPrizePool) {
+          return res.status(400).json({ 
+            message: 'Insufficient wallet balance. Please top up or select another payment method',
+            walletBalance: user.walletBalance,
+            requiredAmount: totalPrizePool
+          });
+        }
+
+        // Deduct from wallet
+        user.walletBalance -= totalPrizePool;
+        await user.save();
+
+        // Create transaction record
+        await Transaction.create({
+          user: req.user.id,
+          type: 'tournament_funding',
+          amount: totalPrizePool,
+          status: 'completed',
+          paymentMethod: 'wallet'
+        });
+      } catch (walletError) {
+        console.error('Wallet processing error:', walletError);
+        return res.status(500).json({ 
+          message: 'Error processing wallet transaction',
+          error: walletError.message
+        });
+      }
+    } else if (fundingMethod === 'topup') {
+      // Direct user to payment page to top up their wallet
+      return res.status(200).json({
+        success: false,
+        redirectToTopup: true,
+        amountNeeded: totalPrizePool,
+        message: 'Please complete the payment to fund your tournament'
+      });
+    }
+
+    // Generate unique tournament link
+    const tournamentLink = `https://lichess.org/tournament/${uuidv4()}`;
+
+    // Parse duration as number
+    const parsedDuration = parseFloat(duration) || 3; // Default to 3 hours if invalid
+    
+    // Parse entry fee as number
+    const parsedEntryFee = parseFloat(entryFee) || 0; // Default to 0 if invalid
+
+    try {
+      // Create tournament with normalized data
+      const tournament = await Tournament.create({
+        title,
+        category,
+        banner: bannerUrl,
+        rules,
+        startDate: new Date(startDate),
+        startTime,
+        duration: parsedDuration,
+        prizeType,
+        prizes: normalizedPrizes,
+        entryFee: parsedEntryFee,
+        fundingMethod,
+        organizer: req.user.id,
+        tournamentLink,
+        password: password || null
+      });
+
+      // Add tournament to user's created tournaments
+      await User.findByIdAndUpdate(req.user.id, {
+        $push: { createdTournaments: tournament._id }
+      });
+
+      res.status(201).json({
+        success: true,
+        data: tournament
+      });
+    } catch (createError) {
+      console.error('Tournament creation error:', createError);
+      return res.status(500).json({ 
+        message: 'Error creating tournament',
+        error: createError.message,
+        validationErrors: createError.errors
+      });
+    }
+  } catch (globalError) {
+    console.error('Global error in createTournament:', globalError);
+    return res.status(500).json({ 
+      message: 'An unexpected error occurred',
+      error: globalError.message
     });
   }
-
-  // Generate unique tournament link
-  const tournamentLink = `https://lichess.org/tournament/${uuidv4()}`;
-
-  // Create tournament
-  const tournament = await Tournament.create({
-    title,
-    category,
-    banner: bannerUrl,
-    rules,
-    startDate,
-    startTime,
-    duration,
-    prizeType,
-    prizes,
-    entryFee,
-    fundingMethod,
-    organizer: req.user.id,
-    tournamentLink,
-    password: password || null
-  });
-
-  // Add tournament to user's created tournaments
-  await User.findByIdAndUpdate(req.user.id, {
-    $push: { createdTournaments: tournament._id }
-  });
-
-  res.status(201).json({
-    success: true,
-    data: tournament
-  });
 });
 
 // @desc    Get all tournaments with pagination and filters
