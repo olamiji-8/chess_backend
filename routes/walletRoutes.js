@@ -6,7 +6,9 @@ const {
   initiateWithdrawal,
   getTransactions,
   getWalletBalance,
-  handlePaystackWebhook 
+  handlePaystackWebhook,
+  checkTitanPaymentStatus,
+  createRecipient
 } = require('../controllers/walletController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -17,6 +19,7 @@ router.post('/withdraw', protect, initiateWithdrawal);
 router.get('/transactions', protect, getTransactions);
 router.get('/balance', protect, getWalletBalance);
 router.post('/webhook', handlePaystackWebhook);
-
+router.get('/titan-status/:reference', protect, checkTitanPaymentStatus);
+router.post('/recipient', protect, createRecipient);
 
 module.exports = router;
