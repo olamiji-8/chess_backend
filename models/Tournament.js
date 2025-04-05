@@ -28,7 +28,7 @@ const TournamentSchema = new mongoose.Schema({
     required: [true, 'Start time is required']
   },
   duration: {
-    type: Number, // In hours
+    type: Number, // In milliseconds
     required: [true, 'Tournament duration is required']
   },
   prizeType: {

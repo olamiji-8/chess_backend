@@ -19,7 +19,7 @@ const VerificationRequestSchema = new mongoose.Schema({
   idType: {
     type: String,
     required: [true, 'ID type is required'],
-    enum: ['nationalId', 'driversLicense', 'passport', 'other'],
+    enum: ['Standard', 'NIN', 'Drivers license', 'Voters card'],
     trim: true
   },
   idNumber: {

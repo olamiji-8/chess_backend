@@ -242,8 +242,10 @@ exports.createTournament = asyncHandler(async (req, res) => {
     // Generate unique tournament link
     const tournamentLink = `https://lichess.org/tournament/${uuidv4()}`;
 
-    // Parse duration as number
-    const parsedDuration = parseFloat(duration) || 3; // Default to 3 hours if invalid
+    // Parse duration as number in hours and convert to milliseconds
+    // 1 hour = 3600000 milliseconds
+    const durationInHours = parseFloat(duration) || 3; // Default to 3 hours if invalid
+    const durationInMs = durationInHours * 3600000;
     
     // Parse entry fee as number
     const parsedEntryFee = parseFloat(entryFee) || 0; // Default to 0 if invalid
@@ -257,7 +259,7 @@ exports.createTournament = asyncHandler(async (req, res) => {
         rules,
         startDate: new Date(startDate),
         startTime,
-        duration: parsedDuration,
+        duration: durationInMs, // Store duration in milliseconds
         prizeType,
         prizes: normalizedPrizes,
         entryFee: parsedEntryFee,
@@ -328,15 +330,22 @@ exports.getTournaments = asyncHandler(async (req, res) => {
     .limit(limit)
     .sort({ startDate: 1 });
   
+  // Convert duration from milliseconds to hours for client display
+  const formattedTournaments = tournaments.map(tournament => {
+    const tournamentObj = tournament.toObject();
+    tournamentObj.durationInHours = tournament.duration / 3600000;
+    return tournamentObj;
+  });
+  
   res.status(200).json({
     success: true,
-    count: tournaments.length,
+    count: formattedTournaments.length,
     total,
     pagination: {
       current: page,
       totalPages: Math.ceil(total / limit)
     },
-    data: tournaments
+    data: formattedTournaments
   });
 });
 
@@ -352,9 +361,13 @@ exports.getTournament = asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'Tournament not found' });
   }
   
+  // Convert duration from milliseconds to hours for client display
+  const tournamentObj = tournament.toObject();
+  tournamentObj.durationInHours = tournament.duration / 3600000;
+  
   res.status(200).json({
     success: true,
-    data: tournament
+    data: tournamentObj
   });
 });
 
@@ -420,7 +433,6 @@ exports.registerForTournament = asyncHandler(async (req, res) => {
     password: tournament.password
   });
 });
-
 
 // @desc    Update tournament status
 // @route   PUT /api/tournaments/:id/status
