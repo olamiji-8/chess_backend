@@ -219,6 +219,10 @@ exports.getUserProfile = asyncHandler(async (req, res) => {
   if (!user) {
     return res.status(404).json({ message: 'User not found' });
   }
+  
+  // Extract bankCode from bankDetails if it exists
+  const bankCode = user.bankDetails?.bankCode || null;
+  
   res.status(200).json({
     success: true,
     data: {
@@ -231,6 +235,7 @@ exports.getUserProfile = asyncHandler(async (req, res) => {
       isVerified: user.isVerified,
       walletBalance: user.walletBalance,
       bankDetails: user.bankDetails,
+      bankCode: bankCode, // Added bankCode explicitly
       registeredTournaments: user.registeredTournaments,
       createdTournaments: user.createdTournaments,
       hasPin: user.hasPin,
