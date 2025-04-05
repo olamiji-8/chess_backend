@@ -42,6 +42,10 @@ lichessAccessToken: {
     type: Boolean,
     default: false
   },
+  hasPin: {
+    type: Boolean,
+    default: false
+  },  
   role: {
     type: String,
     enum: ['user', 'admin'],

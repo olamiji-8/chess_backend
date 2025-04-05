@@ -219,7 +219,6 @@ exports.getUserProfile = asyncHandler(async (req, res) => {
   if (!user) {
     return res.status(404).json({ message: 'User not found' });
   }
-  
   res.status(200).json({
     success: true,
     data: {
@@ -233,7 +232,8 @@ exports.getUserProfile = asyncHandler(async (req, res) => {
       walletBalance: user.walletBalance,
       bankDetails: user.bankDetails,
       registeredTournaments: user.registeredTournaments,
-      createdTournaments: user.createdTournaments
+      createdTournaments: user.createdTournaments,
+      hasPin: user.hasPin,
     }
   });
 });
@@ -408,62 +408,78 @@ exports.updateUserProfile = asyncHandler(async (req, res) => {
 exports.updatePin = asyncHandler(async (req, res) => {
   const { currentPin, newPin, confirmPin } = req.body;
   const userId = req.user.id;
-  
+
   const user = await User.findById(userId).select('+pin');
-  
+
   if (!user) {
     return res.status(404).json({ message: 'User not found' });
   }
   
-  // Validate new PIN format
   if (!newPin || newPin.length !== 4 || !/^\d{4}$/.test(newPin)) {
     return res.status(400).json({ message: 'PIN must be exactly 4 digits' });
   }
-  
-  // Check if PINs match
+
   if (newPin !== confirmPin) {
     return res.status(400).json({ message: 'PINs do not match' });
   }
-  
-  // If user already has a PIN, verify the current PIN using the utility
+
   if (user.pin) {
     if (!currentPin) {
       return res.status(400).json({ message: 'Current PIN is required' });
     }
-    
+
     const pinVerification = await verifyUserPin(userId, currentPin);
     if (!pinVerification.success) {
       return res.status(401).json({ message: 'Current PIN is incorrect' });
     }
+  } else {
+    if (currentPin) {
+      return res.status(400).json({ message: 'Current PIN should not be provided for first-time setup' });
+    }
   }
-  
-  // Hash and save the new PIN
+
   const salt = await bcrypt.genSalt(10);
   user.pin = await bcrypt.hash(newPin, salt);
   await user.save();
-  
+
   res.status(200).json({
     success: true,
     message: 'PIN updated successfully'
   });
 });
 
-
-
 // @desc    Verify PIN
 // @route   POST /api/users/verify-pin
 // @access  Private
 exports.verifyPin = asyncHandler(async (req, res) => {
   const { pin } = req.body;
-  const userId = req.user.id;
-  
-  const pinVerification = await verifyUserPin(userId, pin);
-  
-  res.status(pinVerification.success ? 200 : 401).json({
-    success: pinVerification.success,
-    message: pinVerification.message
+
+  if (!pin) {
+    return res.status(400).json({ success: false, message: "PIN is required" });
+  }
+
+  const user = await User.findById(req.user.id).select('+pin');
+  if (!user) {
+    return res.status(404).json({ success: false, message: "User not found" });
+  }
+
+  const isMatch = await bcrypt.compare(pin, user.pin);
+  if (!isMatch) {
+    return res.status(401).json({ success: false, message: "Invalid PIN" });
+  }
+
+  user.hasPin = true; // <-- This is what updates it
+  await user.save();
+
+  res.status(200).json({
+    success: true,
+    message: "PIN verified successfully",
+    data: {
+      hasPin: user.hasPin
+    }
   });
 });
+
 
 // @desc    Check if user needs to set a PIN
 // @route   GET /api/users/check-pin-status
