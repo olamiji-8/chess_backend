@@ -315,7 +315,7 @@ exports.updateUserProfile = asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'User not found' });
   }
   
-  // Update user fields
+  // Update user fields from form data
   user.fullName = req.body.fullName || user.fullName;
   user.email = req.body.email || user.email;
   user.phoneNumber = req.body.phoneNumber || user.phoneNumber;
@@ -357,58 +357,55 @@ exports.updateUserProfile = asyncHandler(async (req, res) => {
         user.profilePic = req.file.filename;
       }
     }
-  } else if (req.body.profilePic === null) {
-    // If profilePic is explicitly set to null, reset to default
+  } else if (req.body.profilePic === "null") {
+    // Form data sends strings, so check for "null" string instead of null
     user.profilePic = 'default-profile.jpg';
   }
-  // If neither condition is met, keep the existing profile pic
   
-  // Update bank details if provided
-  if (req.body.bankDetails) {
-    const { accountNumber, bankCode, accountName } = req.body.bankDetails;
-    
-    // Only update if all required bank details are provided
-    if (accountNumber && bankCode && accountName) {
-      try {
-        // Optionally verify with Paystack before saving
-        const bankResponse = await axios.get('https://api.paystack.co/bank', {
-          headers: {
-            Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
-          }
-        });
-        
-        // Find bank name from bank code
-        const bank = bankResponse.data.data.find(b => b.code === bankCode);
-        
-        if (!bank) {
-          return res.status(400).json({ 
-            success: false,
-            message: 'Invalid bank code provided' 
-          });
+  // Handle bank details from form data
+  if (req.body.accountNumber && req.body.bankCode && req.body.accountName) {
+    try {
+      // Verify with Paystack before saving
+      const bankResponse = await axios.get('https://api.paystack.co/bank', {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
         }
-        
-        // Save bank details with bank name
-        user.bankDetails = {
-          accountNumber,
-          accountName,
-          bankCode,
-          bankName: bank.name
-        };
-        
-      } catch (error) {
-        console.error('Error verifying bank:', error);
-        // If verification fails, still update but add a note
-        user.bankDetails = {
-          ...req.body.bankDetails,
-          verified: false
-        };
-      }
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: 'Bank details must include accountNumber, bankCode, and accountName'
       });
+      
+      // Find bank name from bank code
+      const bank = bankResponse.data.data.find(b => b.code === req.body.bankCode);
+      
+      if (!bank) {
+        return res.status(400).json({ 
+          success: false,
+          message: 'Invalid bank code provided' 
+        });
+      }
+      
+      // Save bank details with bank name
+      user.bankDetails = {
+        accountNumber: req.body.accountNumber,
+        accountName: req.body.accountName,
+        bankCode: req.body.bankCode,
+        bankName: bank.name
+      };
+      
+    } catch (error) {
+      console.error('Error verifying bank:', error);
+      // If verification fails, still update but add a note
+      user.bankDetails = {
+        accountNumber: req.body.accountNumber,
+        accountName: req.body.accountName,
+        bankCode: req.body.bankCode,
+        verified: false
+      };
     }
+  } else if (req.body.accountNumber || req.body.bankCode || req.body.accountName) {
+    // If any bank field is provided but not all required fields
+    return res.status(400).json({
+      success: false,
+      message: 'Bank details must include accountNumber, bankCode, and accountName'
+    });
   }
   
   const updatedUser = await user.save();
