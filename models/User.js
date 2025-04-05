@@ -60,9 +60,16 @@ lichessAccessToken: {
     select: false 
   },
   bankDetails: {
-    bankName: String,
     accountNumber: String,
-    accountName: String
+    accountName: String,
+    bankCode: String,
+    bankName: String
+  },
+  
+  bankVerification: {
+    code: String,
+    createdAt: Date,
+    verified: Boolean
   },
   registeredTournaments: [{
     type: mongoose.Schema.Types.ObjectId,
