@@ -324,21 +324,44 @@ exports.updateUserProfile = asyncHandler(async (req, res) => {
     user.password = req.body.password;
   }
   
+  // Handle profile image update - Check if file exists in request
   if (req.file) {
-    // Upload profile pic to cloudinary if configured
     try {
+      // Delete previous profile image from Cloudinary if it exists and isn't the default
+      if (user.profilePic && user.profilePic !== 'default-profile.jpg' && user.profilePic.includes('cloudinary')) {
+        // Extract public_id from the URL
+        const publicId = user.profilePic.split('/').pop().split('.')[0];
+        if (publicId) {
+          await cloudinary.uploader.destroy(`profile_pics/${publicId}`);
+        }
+      }
+      
+      // Upload new profile pic to cloudinary
       const uploadResult = await cloudinary.uploader.upload(req.file.path, {
-        folder: 'profile_pics'
+        folder: 'profile_pics',
+        transformation: [
+          { width: 500, height: 500, crop: "limit" },
+          { quality: "auto" }
+        ]
       });
+      
+      // Update user profile pic with new URL
       user.profilePic = uploadResult.secure_url;
       
       // Delete local file after upload
       fs.unlinkSync(req.file.path);
     } catch (error) {
       console.error('Error uploading profile pic:', error);
-      user.profilePic = req.file.filename;
+      // If Cloudinary upload fails, use local file path as fallback
+      if (req.file.path) {
+        user.profilePic = req.file.filename;
+      }
     }
+  } else if (req.body.profilePic === null) {
+    // If profilePic is explicitly set to null, reset to default
+    user.profilePic = 'default-profile.jpg';
   }
+  // If neither condition is met, keep the existing profile pic
   
   // Update bank details if provided
   if (req.body.bankDetails) {
