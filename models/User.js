@@ -22,7 +22,7 @@ const UserSchema = new mongoose.Schema({
   },
   profilePic: {
     type: String,
-    default: 'default-profile.jpg'
+    default: 'https://res.cloudinary.com/dxd1j0yzt/image/upload/v1743781047/IMG-20250404-WA0131_tvlbpz.jpg',
   },
   phoneNumber: {
     type: String,
