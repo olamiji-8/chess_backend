@@ -5,53 +5,278 @@ const bcrypt = require('bcryptjs');
 const axios = require('axios');
 const crypto = require('crypto');
 const { verifyUserPin } = require('../utils/pinVerification');
+const { processSuccessfulPayment } = require('../utils/processSuccessfulPayment');
 
-// @desc    Initiate deposit to wallet with PIN verification
+// @desc    Initiate deposit to wallet with PIN verification and optional recipient transfer
 // @route   POST /api/wallet/deposit
 // @access  Private
 exports.initiateDeposit = asyncHandler(async (req, res) => {
-  const { amount, pin } = req.body;
-  const userId = req.session.userId || req.user.id;
+  try {
+    const { amount, pin, recipientAccountNumber, isTransferToRecipient, paymentMethod } = req.body;
+    
+    // Ensure user exists
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({ message: 'User authentication failed' });
+    }
+    
+    const userId = req.user._id || req.user.id;
+    
+    // Validate amount
+    if (!amount || isNaN(amount) || amount <= 0) {
+      return res.status(400).json({ message: 'Please provide a valid amount' });
+    }
+    
+    // Validate PIN 
+    const pinVerification = await verifyUserPin(userId, pin);
+    
+    if (!pinVerification.success) {
+      return res.status(401).json({ message: pinVerification.message });
+    }
+    
+    // Get full user data AFTER pin verification
+    const user = await User.findById(userId);
+    
+    if (!user || !user.email) {
+      return res.status(404).json({ message: 'User data incomplete or missing' });
+    }
+    
+    // Check if this is a transfer to another user
+    let recipientUser = null;
+    if (isTransferToRecipient && recipientAccountNumber) {
+      // Find recipient user by Paystack account number
+      recipientUser = await User.findOne({ 'bankDetails.accountNumber': recipientAccountNumber });
+      
+      if (!recipientUser) {
+        return res.status(404).json({ 
+          success: false, 
+          message: 'Recipient with this account number not found' 
+        });
+      }
+    }
+
+    // Generate reference
+    const reference = 'CHESS_' + crypto.randomBytes(8).toString('hex');
+    
+    // Create transaction record
+    const transaction = await Transaction.create({
+      user: userId,
+      type: recipientUser ? 'transfer' : 'deposit',
+      amount,
+      reference,
+      status: 'pending',
+      paymentMethod: paymentMethod || 'paystack',
+      recipient: recipientUser ? recipientUser._id : null,
+      details: recipientUser ? {
+        recipientName: recipientUser.fullName,
+        recipientAccountNumber: recipientAccountNumber
+      } : {}
+    });
+
+    // Check for Titan payment method
+    if (paymentMethod === 'titan') {
+      try {
+        // Split full name for Paystack requirements
+        const nameParts = user.fullName.split(' ');
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.slice(1).join(' ') || 'User';
+        
+        // Generate a dedicated virtual account
+        const titanResponse = await axios.post(
+          'https://api.paystack.co/dedicated_account',
+          {
+            customer: user.paystackCustomerId || user.email,
+            preferred_bank: 'wema-bank', 
+            amount: amount * 100, // Amount in kobo
+            reference,
+            phone: user.phoneNumber || "08000000000",
+            first_name: firstName,
+            last_name: lastName
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        
+        // Save virtual account details to transaction
+        transaction.details = {
+          ...transaction.details,
+          titanAccountNumber: titanResponse.data.data.account_number,
+          titanBankName: titanResponse.data.data.bank.name,
+          titanAccountName: titanResponse.data.data.account_name,
+          titanExpiresAt: new Date(Date.now() + 30 * 60 * 1000) // 30 minutes expiry
+        };
+        await transaction.save();
+        
+        return res.status(200).json({
+          success: true,
+          data: {
+            reference,
+            method: 'titan',
+            accountNumber: titanResponse.data.data.account_number,
+            bankName: titanResponse.data.data.bank.name,
+            accountName: titanResponse.data.data.account_name,
+            amount,
+            expiresIn: '30 minutes',
+            isTransferToRecipient: !!recipientUser,
+            recipientName: recipientUser ? recipientUser.fullName : null
+          }
+        });
+      } catch (error) {
+        console.error('Titan Error:', error.response ? error.response.data : error.message);
+        
+        // Instead of trying to reassign paymentMethod, just continue with standard Paystack
+        console.log('Falling back to standard Paystack payment');
+        
+        // Use standard Paystack method instead of trying to reassign paymentMethod
+        try {
+          const paystackResponse = await axios.post(
+            'https://api.paystack.co/transaction/initialize',
+            {
+              email: user.email,
+              amount: amount * 100,
+              reference,
+              callback_url: process.env.PAYSTACK_CALLBACK_URL,
+              metadata: {
+                userId: userId.toString(),
+                transactionId: transaction._id.toString(),
+                isTransferToRecipient: !!recipientUser,
+                recipientId: recipientUser ? recipientUser._id.toString() : null
+              }
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+          
+          res.status(200).json({
+            success: true,
+            data: {
+              method: 'paystack',
+              authorizationUrl: paystackResponse.data.data.authorization_url,
+              reference,
+              isTransferToRecipient: !!recipientUser,
+              recipientName: recipientUser ? recipientUser.fullName : null
+            }
+          });
+        } catch (paystackError) {
+          // Update transaction status to failed
+          transaction.status = 'failed';
+          await transaction.save();
+          
+          console.error('Paystack Error:', paystackError.response ? paystackError.response.data : paystackError.message);
+          res.status(500).json({
+            success: false,
+            message: 'Failed to initialize payment. Please try again later.'
+          });
+        }
+      }
+    } else {
+      // Standard Paystack flow remains unchanged
+      try {
+        const paystackResponse = await axios.post(
+          'https://api.paystack.co/transaction/initialize',
+          {
+            email: user.email,
+            amount: amount * 100,
+            reference,
+            callback_url: process.env.PAYSTACK_CALLBACK_URL,
+            metadata: {
+              userId: userId.toString(),
+              transactionId: transaction._id.toString(),
+              isTransferToRecipient: !!recipientUser,
+              recipientId: recipientUser ? recipientUser._id.toString() : null
+            }
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        
+        res.status(200).json({
+          success: true,
+          data: {
+            method: 'paystack',
+            authorizationUrl: paystackResponse.data.data.authorization_url,
+            reference,
+            isTransferToRecipient: !!recipientUser,
+            recipientName: recipientUser ? recipientUser.fullName : null
+          }
+        });
+      } catch (error) {
+        // Update transaction status to failed
+        transaction.status = 'failed';
+        await transaction.save();
+        
+        console.error('Paystack Error:', error.response ? error.response.data : error.message);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to initialize payment. Please try again later.'
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Deposit Error:', {
+      message: error.message,
+      stack: error.stack,
+      body: req.body
+    });
+    res.status(500).json({
+      success: false,
+      message: 'An unexpected error occurred'
+    });
+  }
+});
+
+// @desc    Check status of Titan account payment
+// @route   GET /api/wallet/titan-status/:reference
+// @access  Private
+exports.checkTitanPaymentStatus = asyncHandler(async (req, res) => {
+  const { reference } = req.params;
   
-  // Validate amount
-  if (!amount || isNaN(amount) || amount <= 0) {
-    return res.status(400).json({ message: 'Please provide a valid amount' });
+  if (!req.user) {
+    return res.status(401).json({ message: 'User authentication failed' });
   }
   
-  // Validate PIN using the utility function
-  const pinVerification = await verifyUserPin(userId, pin);
-  
-  if (!pinVerification.success) {
-    return res.status(401).json({ message: pinVerification.message });
-  }
-  
-  // Use the user object from verification
-  const user = pinVerification.user;
-
-
-  // Generate reference
-  const reference = 'CHESS_' + crypto.randomBytes(8).toString('hex');
-  
-  // Create transaction record
-  const transaction = await Transaction.create({
-    user: userId,
-    type: 'deposit',
-    amount,
-    reference,
-    status: 'pending',
-    paymentMethod: 'paystack'
+  const transaction = await Transaction.findOne({ 
+    reference, 
+    user: req.user._id || req.user.id 
   });
   
-  // Initialize Paystack transaction
+  if (!transaction) {
+    return res.status(404).json({ message: 'Transaction not found' });
+  }
+  
+  // If transaction is already completed or failed
+  if (transaction.status === 'completed') {
+    return res.status(200).json({
+      success: true,
+      status: 'completed',
+      message: 'Payment has been confirmed',
+      walletBalance: req.user.walletBalance
+    });
+  }
+  
+  if (transaction.status === 'failed') {
+    return res.status(200).json({
+      success: false,
+      status: 'failed',
+      message: 'Payment failed or was declined'
+    });
+  }
+  
+  // For Titan account payments, check transaction list via Paystack
   try {
-    const paystackResponse = await axios.post(
-      'https://api.paystack.co/transaction/initialize',
-      {
-        email: user.email,
-        amount: amount * 100, // Paystack expects amount in kobo
-        reference,
-        callback_url: process.env.PAYSTACK_CALLBACK_URL
-      },
+    const response = await axios.get(
+      `https://api.paystack.co/transaction?reference=${reference}`,
       {
         headers: {
           Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
@@ -60,34 +285,71 @@ exports.initiateDeposit = asyncHandler(async (req, res) => {
       }
     );
     
-    res.status(200).json({
+    const transactions = response.data.data;
+    
+    if (transactions && transactions.length > 0) {
+      const paystackTransaction = transactions[0];
+      
+      if (paystackTransaction.status === 'success') {
+        // Process the successful payment
+        await processSuccessfulPayment(transaction, paystackTransaction.amount, 'success');
+        
+        // Get updated user balance
+        const user = await User.findById(req.user._id || req.user.id);
+        
+        return res.status(200).json({
+          success: true,
+          status: 'completed',
+          message: 'Your payment has been confirmed',
+          walletBalance: user.walletBalance
+        });
+      }
+    }
+    
+    // Check if the Titan account has expired
+    if (transaction.details.titanExpiresAt && new Date() > new Date(transaction.details.titanExpiresAt)) {
+      transaction.status = 'expired';
+      await transaction.save();
+      
+      return res.status(200).json({
+        success: false,
+        status: 'expired',
+        message: 'The payment window has expired. Please initiate a new deposit.'
+      });
+    }
+    
+    // Payment is still pending
+    return res.status(200).json({
       success: true,
-      data: {
-        authorizationUrl: paystackResponse.data.data.authorization_url,
+      status: 'pending',
+      message: 'We have not received your payment yet. Please complete the bank transfer.',
+      accountDetails: {
+        accountNumber: transaction.details.titanAccountNumber,
+        bankName: transaction.details.titanBankName,
+        accountName: transaction.details.titanAccountName,
+        amount: transaction.amount,
         reference
       }
     });
-  } catch (error) {
-    // Update transaction status to failed
-    transaction.status = 'failed';
-    await transaction.save();
     
-    console.error('Paystack Error:', error.response ? error.response.data : error.message);
+  } catch (error) {
+    console.error('Titan Status Error:', error.response ? error.response.data : error.message);
     res.status(500).json({
       success: false,
-      message: 'Failed to initialize payment. Please try again later.'
+      message: 'Failed to check payment status'
     });
   }
 });
-
 
 // @desc    Handle Paystack webhook
 // @route   POST /api/wallet/webhook
 // @access  Public
 exports.handlePaystackWebhook = asyncHandler(async (req, res) => {
+  const secretKey = process.env.PAYSTACK_SECRET_KEY;
+  
   // Verify that the request is from Paystack
   const hash = crypto
-    .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+    .createHmac('sha512', secretKey)
     .update(JSON.stringify(req.body))
     .digest('hex');
   
@@ -99,114 +361,29 @@ exports.handlePaystackWebhook = asyncHandler(async (req, res) => {
   // Process the webhook payload
   const event = req.body;
   
+  console.log(`Received webhook event: ${event.event}`, JSON.stringify(event.data));
+  
   // Handle the event based on its type
   switch(event.event) {
     case 'charge.success':
-      // Extract the reference and verify transaction
-      const { reference, status, amount } = event.data;
-      
-      // Find the transaction in our database
-      const transaction = await Transaction.findOne({ reference });
-      
-      if (!transaction) {
-        // Log the issue but return 200 to acknowledge receipt
-        console.error(`Transaction with reference ${reference} not found`);
-        return res.sendStatus(200);
-      }
-      
-      // If transaction already completed, just acknowledge
-      if (transaction.status === 'completed') {
-        return res.sendStatus(200);
-      }
-      
-      // Update transaction status
-      if (status === 'success') {
-        transaction.status = 'completed';
-        await transaction.save();
-        
-        // Update user wallet balance
-        const user = await User.findById(transaction.user);
-        user.walletBalance += (amount / 100); // Convert from kobo to naira
-        await user.save();
-        
-        console.log(`Deposit successful: ${amount / 100} naira added to user ${user._id}`);
-      } else {
-        transaction.status = 'failed';
-        await transaction.save();
-        console.log(`Payment verification failed for reference ${reference}`);
-      }
+      await handleChargeSuccess(event.data);
       break;
       
     case 'transfer.success':
-      // Handle successful withdrawal transfers
-      const transferData = event.data;
-      const withdrawalTransaction = await Transaction.findOne({ 
-        reference: transferData.reference,
-        type: 'withdrawal'
-      });
-      
-      if (!withdrawalTransaction) {
-        console.error(`Withdrawal transaction with reference ${transferData.reference} not found`);
-        return res.sendStatus(200);
-      }
-      
-      // Update transaction status if not already completed
-      if (withdrawalTransaction.status !== 'completed') {
-        withdrawalTransaction.status = 'completed';
-        await withdrawalTransaction.save();
-        console.log(`Withdrawal successful: ${transferData.amount / 100} naira transferred to user ${withdrawalTransaction.user}`);
-      }
+      await handleTransferSuccess(event.data);
       break;
       
     case 'transfer.failed':
-      // Handle failed withdrawal transfers
-      const failedTransferData = event.data;
-      const failedWithdrawalTransaction = await Transaction.findOne({ 
-        reference: failedTransferData.reference,
-        type: 'withdrawal'
-      });
-      
-      if (!failedWithdrawalTransaction) {
-        console.error(`Failed withdrawal transaction with reference ${failedTransferData.reference} not found`);
-        return res.sendStatus(200);
-      }
-      
-      // Update transaction status and refund user
-      if (failedWithdrawalTransaction.status !== 'failed') {
-        failedWithdrawalTransaction.status = 'failed';
-        await failedWithdrawalTransaction.save();
-        
-        // Refund user's wallet
-        const userToRefund = await User.findById(failedWithdrawalTransaction.user);
-        userToRefund.walletBalance += failedWithdrawalTransaction.amount;
-        await userToRefund.save();
-        
-        console.log(`Withdrawal failed: ${failedWithdrawalTransaction.amount} naira refunded to user ${failedWithdrawalTransaction.user}`);
-      }
+      await handleTransferFailed(event.data);
       break;
 
     case 'charge.dispute.create':
-      // Handle disputes (chargebacks)
-      const disputeData = event.data;
-      const disputedTransaction = await Transaction.findOne({ reference: disputeData.reference });
+      await handleDisputeCreate(event.data);
+      break;
       
-      if (disputedTransaction) {
-        // You might want to create a new transaction type for disputes
-        // Or add a note to the existing transaction
-        disputedTransaction.status = 'disputed';
-        disputedTransaction.details = {
-          ...disputedTransaction.details,
-          dispute: {
-            id: disputeData.id,
-            status: disputeData.status,
-            category: disputeData.category,
-            amount: disputeData.amount
-          }
-        };
-        await disputedTransaction.save();
-        
-        console.log(`Transaction ${disputeData.reference} has been disputed`);
-      }
+    // Add dedicated account event for Titan
+    case 'dedicated_account.credit':
+      await handleDedicatedAccountCredit(event.data);
       break;
       
     default:
@@ -218,6 +395,127 @@ exports.handlePaystackWebhook = asyncHandler(async (req, res) => {
   // Always acknowledge receipt of the webhook
   return res.sendStatus(200);
 });
+
+// Handle dedicated_account.credit event for Titan accounts
+const handleDedicatedAccountCredit = async (data) => {
+  const { reference, amount } = data;
+  
+  if (!reference) {
+    console.error('No reference in Titan account credit webhook data');
+    return;
+  }
+  
+  const transaction = await Transaction.findOne({ reference });
+  
+  if (!transaction) {
+    console.error(`Transaction with reference ${reference} not found for Titan credit`);
+    return;
+  }
+  
+  await processSuccessfulPayment(transaction, amount, 'success');
+  console.log(`Titan payment processed: ${amount/100} naira for transaction ${transaction._id}`);
+};
+
+// Handle charge.success event
+const handleChargeSuccess = async (data) => {
+  const { reference, status, amount, metadata } = data;
+  
+  // Find the transaction in our database
+  const transaction = await Transaction.findOne({ reference });
+  
+  if (!transaction) {
+    // If metadata contains transactionId, try to find by that
+    if (metadata && metadata.transactionId) {
+      const transactionById = await Transaction.findById(metadata.transactionId);
+      if (transactionById) {
+        await processSuccessfulPayment(transactionById, amount, status);
+        return;
+      }
+    }
+    console.error(`Transaction with reference ${reference} not found`);
+    return;
+  }
+  
+  await processSuccessfulPayment(transaction, amount, status);
+};
+
+// Handle transfer.success event
+const handleTransferSuccess = async (data) => {
+  const { reference } = data;
+  const withdrawalTransaction = await Transaction.findOne({ 
+    reference,
+    type: 'withdrawal'
+  });
+  
+  if (!withdrawalTransaction) {
+    console.error(`Withdrawal transaction with reference ${reference} not found`);
+    return;
+  }
+  
+  // Update transaction status if not already completed
+  if (withdrawalTransaction.status !== 'completed') {
+    withdrawalTransaction.status = 'completed';
+    await withdrawalTransaction.save();
+    console.log(`Withdrawal successful: ${data.amount / 100} naira transferred to user ${withdrawalTransaction.user}`);
+  }
+};
+
+// Handle transfer.failed event
+const handleTransferFailed = async (data) => {
+  const { reference } = data;
+  const failedWithdrawalTransaction = await Transaction.findOne({ 
+    reference,
+    type: 'withdrawal'
+  });
+  
+  if (!failedWithdrawalTransaction) {
+    console.error(`Failed withdrawal transaction with reference ${reference} not found`);
+    return;
+  }
+  
+  // Update transaction status and refund user
+  if (failedWithdrawalTransaction.status !== 'failed') {
+    failedWithdrawalTransaction.status = 'failed';
+    failedWithdrawalTransaction.details = {
+      ...failedWithdrawalTransaction.details,
+      failureReason: data.reason || 'Unknown reason'
+    };
+    await failedWithdrawalTransaction.save();
+    
+    // Refund user's wallet
+    const userToRefund = await User.findById(failedWithdrawalTransaction.user);
+    if (userToRefund) {
+      userToRefund.walletBalance += failedWithdrawalTransaction.amount;
+      await userToRefund.save();
+      
+      console.log(`Withdrawal failed: ${failedWithdrawalTransaction.amount} naira refunded to user ${failedWithdrawalTransaction.user}`);
+    } else {
+      console.error(`User ${failedWithdrawalTransaction.user} not found for failed withdrawal ${failedWithdrawalTransaction._id}`);
+    }
+  }
+};
+
+// Handle dispute.create event
+const handleDisputeCreate = async (data) => {
+  const { reference } = data;
+  const disputedTransaction = await Transaction.findOne({ reference });
+  
+  if (disputedTransaction) {
+    disputedTransaction.status = 'disputed';
+    disputedTransaction.details = {
+      ...disputedTransaction.details,
+      dispute: {
+        id: data.id,
+        status: data.status,
+        category: data.category,
+        amount: data.amount
+      }
+    };
+    await disputedTransaction.save();
+    
+    console.log(`Transaction ${reference} has been disputed`);
+  }
+};
 
 // @desc    Verify deposit callback
 // @route   GET /api/wallet/verify/:reference
@@ -282,90 +580,137 @@ exports.verifyDeposit = asyncHandler(async (req, res) => {
   }
 });
 
+
 // @desc    Initiate withdrawal with PIN verification
 // @route   POST /api/wallet/withdraw
 // @access  Private
 exports.initiateWithdrawal = asyncHandler(async (req, res) => {
-  const { amount, pin } = req.body;
-  const userId = req.session.userId || req.user.id;
-  
-  // Validate amount
-  if (!amount || isNaN(amount) || amount <= 0) {
-    return res.status(400).json({ message: 'Please provide a valid amount' });
-  }
-  
-  // Validate PIN using the utility function
-  const pinVerification = await verifyUserPin(userId, pin);
-  
-  if (!pinVerification.success) {
-    return res.status(401).json({ message: pinVerification.message });
-  }
-  
-  // Use the user object from verification
-  const user = pinVerification.user;
-
-  
-  
-  // Check wallet balance
-  if (user.walletBalance < amount) {
-    return res.status(400).json({ 
-      message: 'Insufficient wallet balance', 
-      walletBalance: user.walletBalance,
-      requestedAmount: amount
+  try {
+    const { amount, pin } = req.body;
+    
+    // Check user authentication
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({ message: 'User authentication failed' });
+    }
+    
+    const userId = req.user._id || req.user.id;
+    
+    // Validate amount
+    if (!amount || isNaN(amount) || amount <= 0) {
+      return res.status(400).json({ message: 'Please provide a valid amount' });
+    }
+    
+    // Validate PIN
+    const pinVerification = await verifyUserPin(userId, pin);
+    
+    if (!pinVerification.success) {
+      return res.status(401).json({ message: pinVerification.message });
+    }
+    
+    // Get complete user data AFTER pin verification
+    const user = await User.findById(userId);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Check wallet balance
+    if (user.walletBalance < amount) {
+      return res.status(400).json({ 
+        message: 'Insufficient wallet balance', 
+        walletBalance: user.walletBalance,
+        requestedAmount: amount
+      });
+    }
+    
+    // Check if bank details are provided
+    if (!user.bankDetails || !user.bankDetails.accountNumber || !user.bankDetails.bankName) {
+      return res.status(400).json({ message: 'Please update your bank details before withdrawal' });
+    }
+    
+    // Check if user is verified
+    if (!user.isVerified) {
+      return res.status(403).json({ message: 'Account verification is required before making withdrawals. Please verify your account first.' });
+    }
+    
+    // Generate reference
+    const reference = 'CHESS_WD_' + crypto.randomBytes(8).toString('hex');
+    
+    // Create transaction record
+    const transaction = await Transaction.create({
+      user: userId,
+      type: 'withdrawal',
+      amount,
+      reference,
+      status: 'pending',
+      paymentMethod: 'bank_transfer',
+      details: {
+        bankName: user.bankDetails.bankName,
+        accountNumber: user.bankDetails.accountNumber,
+        accountName: user.bankDetails.accountName || user.fullName
+      }
+    });
+    
+    // Deduct from wallet balance
+    user.walletBalance -= amount;
+    await user.save();
+    
+    // Here we would implement Paystack transfer
+    try {
+      // For now, simulate a successful transfer request
+      console.log(`Withdrawal initiated: ${amount} naira for user ${userId}, reference: ${reference}`);
+      
+      res.status(200).json({
+        success: true,
+        message: 'Withdrawal request initiated successfully. Please allow 1-2 business days for processing.',
+        data: {
+          amount,
+          newBalance: user.walletBalance,
+          reference,
+          estimatedProcessingTime: '1-2 business days'
+        }
+      });
+    } catch (error) {
+      // If transfer request fails, refund the user and mark transaction as failed
+      user.walletBalance += amount;
+      await user.save();
+      
+      transaction.status = 'failed';
+      transaction.details = {
+        ...transaction.details,
+        failureReason: error.response ? error.response.data.message : error.message
+      };
+      await transaction.save();
+      
+      console.error('Withdrawal Error:', error.response ? error.response.data : error.message);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to process withdrawal. Your wallet has been refunded.'
+      });
+    }
+  } catch (error) {
+    console.error('Withdrawal Error:', {
+      message: error.message,
+      stack: error.stack,
+      body: req.body
+    });
+    res.status(500).json({
+      success: false,
+      message: 'An unexpected error occurred during withdrawal'
     });
   }
-  
-  // Check if bank details are provided
-  if (!user.bankDetails || !user.bankDetails.accountNumber || !user.bankDetails.bankName) {
-    return res.status(400).json({ message: 'Please update your bank details before withdrawal' });
-  }
-  
-  // Check if user is verified
-  if (!user.isVerified) {
-    return res.status(403).json({ message: 'Account verification is required before making withdrawals. Please verify your account first.' });
-  }
-  
-  // Generate reference
-  const reference = 'CHESS_WD_' + crypto.randomBytes(8).toString('hex');
-  
-  // Create transaction record
-  const transaction = await Transaction.create({
-    user: userId,
-    type: 'withdrawal',
-    amount,
-    reference,
-    status: 'pending',
-    paymentMethod: 'bank_transfer',
-    details: {
-      bankName: user.bankDetails.bankName,
-      accountNumber: user.bankDetails.accountNumber,
-      accountName: user.bankDetails.accountName || user.fullName
-    }
-  });
-  
-  // Deduct from wallet balance
-  user.walletBalance -= amount;
-  await user.save();
-  
-  // In a real app, we would integrate with Paystack Transfer API here
-  
-  res.status(200).json({
-    success: true,
-    message: 'Withdrawal request initiated successfully. Please allow 1-2 business days for processing.',
-    data: {
-      amount,
-      newBalance: user.walletBalance,
-      reference,
-      estimatedProcessingTime: '1-2 business days'
-    }
-  });
 });
 
 // @desc    Get all transaction history with pagination
 // @route   GET /api/wallet/transactions
 // @access  Private
 exports.getTransactions = asyncHandler(async (req, res) => {
-  const userId = req.session.userId || req.user.id;
+  // Fix: Check if user exists in different possible formats
+  if (!req.user) {
+    return res.status(401).json({ message: 'User authentication failed' });
+  }
+  
+  const userId = req.user._id || req.user.id;
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 10;
   const startIndex = (page - 1) * limit;
@@ -394,9 +739,9 @@ exports.getTransactions = asyncHandler(async (req, res) => {
 // @route   GET /api/wallet/balance
 // @access  Private
 exports.getWalletBalance = asyncHandler(async (req, res) => {
-  const userId = (req.session && req.session.userId) || 
-                 (req.user && req.user.id) || 
-                 (req.user && req.user._id);
+  // This function already works according to logs, but let's make it more robust
+  const userId = (req.user && (req.user._id || req.user.id)) || 
+                 (req.session && req.session.userId);
   
   if (!userId) {
     return res.status(401).json({ message: 'Authentication required' });
@@ -414,3 +759,62 @@ exports.getWalletBalance = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Create recipient for bank transfer
+// @route   POST /api/wallet/recipient
+// @access  Private
+exports.createRecipient = asyncHandler(async (req, res) => {
+  if (!req.user) {
+    return res.status(401).json({ message: 'User authentication failed' });
+  }
+  
+  const userId = req.user._id || req.user.id;
+  const user = await User.findById(userId);
+  
+  if (!user) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+  
+  // Ensure bank details are provided
+  if (!user.bankDetails || !user.bankDetails.accountNumber || !user.bankDetails.bankName) {
+    return res.status(400).json({ message: 'Please update your bank details first' });
+  }
+  
+  try {
+    // Create transfer recipient in Paystack
+    const response = await axios.post(
+      'https://api.paystack.co/transferrecipient',
+      {
+        type: 'nuban',
+        name: user.bankDetails.accountName || user.fullName,
+        account_number: user.bankDetails.accountNumber,
+        bank_code: user.bankDetails.bankCode, // You need to get the bank code beforehand
+        currency: 'NGN'
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    // Save recipient code to user
+    user.paystackRecipientCode = response.data.data.recipient_code;
+    await user.save();
+    
+    res.status(200).json({
+      success: true,
+      message: 'Bank account successfully linked for withdrawals',
+      data: {
+        accountName: response.data.data.details.account_name,
+        bankName: user.bankDetails.bankName
+      }
+    });
+  } catch (error) {
+    console.error('Recipient Creation Error:', error.response ? error.response.data : error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to link bank account. Please check your bank details.'
+    });
+  }
+});

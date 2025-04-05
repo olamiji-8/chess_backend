@@ -26,7 +26,7 @@ const TransactionSchema = new mongoose.Schema({
   },
   paymentMethod: {
     type: String,
-    enum: ['paystack', 'wallet', 'bank_transfer']
+    enum: ['paystack', 'wallet', 'bank_transfer', "titan"]
   },
   status: {
     type: String,

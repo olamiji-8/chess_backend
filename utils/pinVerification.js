@@ -7,62 +7,93 @@ const bcrypt = require('bcryptjs');
  * @param {string} pin - The PIN to verify
  * @returns {Object} - Result with success boolean and message
  */
-exports.verifyUserPin = async (userId, pin) => {
+// exports.verifyUserPin = async (userId, pin) => {
+//   try {
+//     // Check if PIN is provided
+//     if (!pin) {
+//       return {
+//         success: false,
+//         message: 'PIN is required'
+//       };
+//     }
+    
+//     // Validate PIN format
+//     if (pin.length !== 4 || !/^\d{4}$/.test(pin)) {
+//       return {
+//         success: false,
+//         message: 'PIN must be exactly 4 digits'
+//       };
+//     }
+    
+//     // Find user with PIN field
+//     const user = await User.findById(userId).select('+pin');
+    
+//     if (!user) {
+//       return {
+//         success: false,
+//         message: 'User not found'
+//       };
+//     }
+    
+//     // Check if user has set a PIN
+//     if (!user.pin) {
+//       return {
+//         success: false,
+//         message: 'PIN not set. Please set your PIN first.'
+//       };
+//     }
+    
+//     // Compare PIN
+//     const isMatch = await bcrypt.compare(pin, user.pin);
+    
+//     if (!isMatch) {
+//       return {
+//         success: false,
+//         message: 'Incorrect PIN'
+//       };
+//     }
+    
+//     return {
+//       success: true,
+//       message: 'PIN verified successfully'
+//     };
+//   } catch (error) {
+//     console.error('PIN verification error:', error);
+//     return {
+//       success: false,
+//       message: 'Error verifying PIN',
+//       error: error.message
+//     };
+//   }
+// };
+
+
+const verifyUserPin = async (userId, pin) => {
   try {
-    // Check if PIN is provided
-    if (!pin) {
-      return {
-        success: false,
-        message: 'PIN is required'
-      };
-    }
-    
-    // Validate PIN format
-    if (pin.length !== 4 || !/^\d{4}$/.test(pin)) {
-      return {
-        success: false,
-        message: 'PIN must be exactly 4 digits'
-      };
-    }
-    
-    // Find user with PIN field
+    // Get user with PIN field (which is normally excluded)
     const user = await User.findById(userId).select('+pin');
     
     if (!user) {
-      return {
-        success: false,
-        message: 'User not found'
-      };
+      return { success: false, message: 'User not found' };
     }
     
-    // Check if user has set a PIN
     if (!user.pin) {
-      return {
-        success: false,
-        message: 'PIN not set. Please set your PIN first.'
-      };
+      return { success: false, message: 'PIN not set. Please set up your PIN first.' };
     }
     
-    // Compare PIN
     const isMatch = await bcrypt.compare(pin, user.pin);
-    
     if (!isMatch) {
-      return {
-        success: false,
-        message: 'Incorrect PIN'
-      };
+      return { success: false, message: 'Incorrect PIN' };
     }
     
-    return {
-      success: true,
-      message: 'PIN verified successfully'
-    };
+    // Return success but NOT the user object with the PIN
+    // This is important for security
+    return { success: true, userId: user._id };
   } catch (error) {
     console.error('PIN verification error:', error);
-    return {
-      success: false,
-      message: 'Error verifying PIN',
-      error: error.message
-    };
+    return { success: false, message: 'PIN verification failed' };
   }
 };
+
+// Export the verifyUserPin function if it's not already exported
+exports.verifyUserPin = verifyUserPin;
