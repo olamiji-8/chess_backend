@@ -211,33 +211,32 @@ exports.createTournament = asyncHandler(async (req, res) => {
         }
 
         // Deduct from wallet
-        user.walletBalance -= totalPrizePool;
-        await user.save();
+    user.walletBalance -= totalPrizePool;
+    await user.save();
 
-        // Create transaction record
-        await Transaction.create({
-          user: req.user.id,
-          type: 'tournament_funding',
-          amount: totalPrizePool,
-          status: 'completed',
-          paymentMethod: 'wallet'
-        });
-      } catch (walletError) {
-        console.error('Wallet processing error:', walletError);
-        return res.status(500).json({ 
-          message: 'Error processing wallet transaction',
-          error: walletError.message
-        });
-      }
-    } else if (fundingMethod === 'topup') {
-      // Direct user to payment page to top up their wallet
-      return res.status(200).json({
-        success: false,
-        redirectToTopup: true,
-        amountNeeded: totalPrizePool,
-        message: 'Please complete the payment to fund your tournament'
-      });
-    }
+    // Generate a reference ID but don't create the transaction yet
+    // We'll define this in a higher scope so it's available later
+    const transactionReference = `FUND-${uuidv4().slice(0,8)}`;
+    
+    // Store this for later use after tournament creation
+    req.transactionReference = transactionReference;
+    
+  } catch (walletError) {
+    console.error('Wallet processing error:', walletError);
+    return res.status(500).json({ 
+      message: 'Error processing wallet transaction',
+      error: walletError.message
+    });
+  }
+} else if (fundingMethod === 'topup') {
+  // Direct user to payment page to top up their wallet
+  return res.status(200).json({
+    success: false,
+    redirectToTopup: true,
+    amountNeeded: totalPrizePool,
+    message: 'Please complete the payment to fund your tournament'
+  });
+}
 
     // Generate unique tournament link
     const tournamentLink = `https://lichess.org/tournament/${uuidv4()}`;
@@ -268,6 +267,24 @@ exports.createTournament = asyncHandler(async (req, res) => {
         tournamentLink,
         password: password || null
       });
+
+      // If wallet payment was used, update the transaction with the tournament ID
+      if (fundingMethod === 'wallet') {
+        try {
+          await Transaction.create({
+            user: req.user.id,
+            tournament: tournament._id,
+            type: 'tournament_funding',
+            amount: totalPrizePool,
+            status: 'completed',
+            paymentMethod: 'wallet',
+            reference: req.transactionReference
+          });
+        } catch (transactionError) {
+          console.error('Error creating transaction record:', transactionError);
+          // We don't want to fail the whole operation if just the transaction record fails
+        }
+      }
 
       // Add tournament to user's created tournaments
       await User.findByIdAndUpdate(req.user.id, {
@@ -410,11 +427,11 @@ exports.registerForTournament = asyncHandler(async (req, res) => {
     // Create transaction record
     await Transaction.create({
       user: req.user.id,
-      tournament: tournament._id,
-      type: 'tournament_entry',
-      amount: tournament.entryFee,
+      type: 'tournament_funding',
+      amount: totalPrizePool,
       status: 'completed',
-      paymentMethod: 'wallet'
+      paymentMethod: 'wallet',
+      reference: `TOURNAMENT-${uuidv4().slice(0,8)}` // Generate a reference ID
     });
   }
   
