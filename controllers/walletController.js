@@ -394,7 +394,14 @@ exports.getTransactions = asyncHandler(async (req, res) => {
 // @route   GET /api/wallet/balance
 // @access  Private
 exports.getWalletBalance = asyncHandler(async (req, res) => {
-  const userId = req.session.userId || req.user.id;
+  const userId = (req.session && req.session.userId) || 
+                 (req.user && req.user.id) || 
+                 (req.user && req.user._id);
+  
+  if (!userId) {
+    return res.status(401).json({ message: 'Authentication required' });
+  }
+  
   const user = await User.findById(userId);
   
   if (!user) {
