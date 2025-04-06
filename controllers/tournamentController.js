@@ -193,7 +193,13 @@
           error: prizeCalcError.message
         });
       }
-
+      if (parsedEntryFee > totalPrizePool) {
+        return res.status(400).json({
+          message: 'Entry fee cannot be higher than the total prize pool',
+          entryFee: parsedEntryFee,
+          totalPrizePool: totalPrizePool
+        });
+      }
       // Generate unique transaction reference that we can use later
       const transactionReference = `FUND-${uuidv4().slice(0,8)}`;
 
@@ -497,3 +503,137 @@ exports.getTournaments = asyncHandler(async (req, res) => {
       status: tournament.status
     });
   });
+
+  // New endpoint for pre-registration check
+// @desc    Check if user can register for tournament
+// @route   GET /api/tournaments/:id/registration-check
+// @access  Private
+exports.checkTournamentRegistration = asyncHandler(async (req, res) => {
+  const tournament = await Tournament.findById(req.params.id);
+  
+  if (!tournament) {
+    return res.status(404).json({ message: 'Tournament not found' });
+  }
+  
+  // Check if user is already registered
+  if (tournament.participants.includes(req.user.id)) {
+    return res.status(400).json({ message: 'You are already registered for this tournament' });
+  }
+  
+  const user = await User.findById(req.user.id);
+  
+  // Check if user has Lichess account linked
+  if (!user.lichessUsername) {
+    return res.status(400).json({ message: 'You need to link your Lichess account to register for tournaments' });
+  }
+  
+  // Check wallet balance if there's an entry fee
+  if (tournament.entryFee > 0) {
+    if (user.walletBalance < tournament.entryFee) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Insufficient wallet balance. Please top up to register',
+        walletBalance: user.walletBalance,
+        entryFee: tournament.entryFee
+      });
+    }
+  }
+  
+  // Return success with tournament details for confirmation
+  res.status(200).json({
+    success: true,
+    message: 'You can register for this tournament',
+    tournament: {
+      id: tournament._id,
+      title: tournament.title,
+      entryFee: tournament.entryFee,
+      startDate: tournament.startDate,
+      startTime: tournament.startTime
+    }
+  });
+});
+
+// Update the existing registration endpoint
+// @desc    Register for a tournament
+// @route   POST /api/tournaments/:id/register
+// @access  Private
+exports.registerForTournament = asyncHandler(async (req, res) => {
+  const tournament = await Tournament.findById(req.params.id);
+  
+  if (!tournament) {
+    return res.status(404).json({ message: 'Tournament not found' });
+  }
+  
+  // Check if user is already registered
+  if (tournament.participants.includes(req.user.id)) {
+    return res.status(400).json({ message: 'You are already registered for this tournament' });
+  }
+  
+  const user = await User.findById(req.user.id);
+  
+  // Check if user has Lichess account linked
+  if (!user.lichessUsername) {
+    return res.status(400).json({ message: 'You need to link your Lichess account to register for tournaments' });
+  }
+  
+  // Handle entry fee payment if needed
+  if (tournament.entryFee > 0) {
+    if (user.walletBalance < tournament.entryFee) {
+      return res.status(400).json({ 
+        message: 'Insufficient wallet balance. Please top up to register',
+        walletBalance: user.walletBalance,
+        entryFee: tournament.entryFee
+      });
+    }
+    
+    // Get confirmation from the request body
+    const { confirmed } = req.body;
+    
+    if (!confirmed) {
+      return res.status(400).json({ 
+        message: 'Please confirm registration to proceed',
+        requiresConfirmation: true,
+        tournament: {
+          id: tournament._id,
+          title: tournament.title,
+          entryFee: tournament.entryFee
+        }
+      });
+    }
+    
+    // Deduct entry fee from wallet
+    user.walletBalance -= tournament.entryFee;
+    await user.save();
+    
+    // Create transaction record
+    await Transaction.create({
+      user: req.user.id,
+      tournament: tournament._id,
+      type: 'tournament_entry',
+      amount: tournament.entryFee,
+      status: 'completed',
+      paymentMethod: 'wallet',
+      reference: `ENTRY-${uuidv4().slice(0,8)}` // Generate a reference ID
+    });
+  }
+  
+  // Add user to tournament participants
+  tournament.participants.push(req.user.id);
+  await tournament.save();
+  
+  // Add tournament to user's registered tournaments
+  user.registeredTournaments.push(tournament._id);
+  await user.save();
+  
+  res.status(200).json({
+    success: true,
+    message: 'Successfully registered for tournament',
+    tournamentLink: tournament.tournamentLink,
+    password: tournament.password || '', // Return empty string if password is null
+    tournamentDetails: {
+      title: tournament.title,
+      startDate: tournament.startDate,
+      startTime: tournament.startTime
+    }
+  });
+});

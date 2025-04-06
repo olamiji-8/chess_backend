@@ -5,7 +5,7 @@ const {
   getTournaments, 
   getTournament,
   registerForTournament,
-  getWalletBalance,
+  checkTournamentRegistration,
   updateTournamentStatus
 } = require('../controllers/tournamentController');
 const { protect } = require('../middleware/authMiddleware');
@@ -17,10 +17,8 @@ router.get('/:id', getTournament);
 
 // Protected routes
 router.post('/', protect, upload.single('banner'), createTournament);
+router.get('/:id/registration-check', protect, checkTournamentRegistration);
 router.post('/:id/register', protect, registerForTournament);
-
-// router.get('/:id', getTournament);
 router.put('/:id/status', protect, updateTournamentStatus);
 
 module.exports = router;
-
