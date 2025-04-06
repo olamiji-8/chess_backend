@@ -324,8 +324,9 @@ exports.updateUserProfile = asyncHandler(async (req, res) => {
     user.password = req.body.password;
   }
   
-  // Handle profile image update - Check if file exists in request
+  // Handle profile image update
   if (req.file) {
+    // Case 1: File upload handling
     try {
       // Delete previous profile image from Cloudinary if it exists and isn't the default
       if (user.profilePic && user.profilePic !== 'default-profile.jpg' && user.profilePic.includes('cloudinary')) {
@@ -357,9 +358,44 @@ exports.updateUserProfile = asyncHandler(async (req, res) => {
         user.profilePic = req.file.filename;
       }
     }
-  } else if (req.body.profilePic === "null") {
-    // Form data sends strings, so check for "null" string instead of null
-    user.profilePic = 'default-profile.jpg';
+  } else if (req.body.profilePic) {
+    // Case 2: String URL or base64 handling
+    if (req.body.profilePic === "null" || req.body.profilePic === "default") {
+      // Reset to default profile pic
+      user.profilePic = 'default-profile.jpg';
+    } else if (req.body.profilePic.startsWith('http')) {
+      // Direct URL assignment (e.g. from another service)
+      user.profilePic = req.body.profilePic;
+    } else if (req.body.profilePic.startsWith('data:image')) {
+      // Handle base64 encoded image
+      try {
+        // Delete previous profile image if needed
+        if (user.profilePic && user.profilePic !== 'default-profile.jpg' && user.profilePic.includes('cloudinary')) {
+          const publicId = user.profilePic.split('/').pop().split('.')[0];
+          if (publicId) {
+            await cloudinary.uploader.destroy(`profile_pics/${publicId}`);
+          }
+        }
+        
+        // Upload base64 image to Cloudinary
+        const uploadResult = await cloudinary.uploader.upload(req.body.profilePic, {
+          folder: 'profile_pics',
+          transformation: [
+            { width: 500, height: 500, crop: "limit" },
+            { quality: "auto" }
+          ]
+        });
+        
+        user.profilePic = uploadResult.secure_url;
+      } catch (error) {
+        console.error('Error uploading base64 profile pic:', error);
+        return res.status(400).json({
+          success: false,
+          message: 'Error processing profile image'
+        });
+      }
+    }
+    // If profilePic is something else, ignore it
   }
   
   // Handle bank details from form data
