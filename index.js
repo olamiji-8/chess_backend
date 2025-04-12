@@ -78,6 +78,8 @@ const walletRoutes = require('./routes/walletRoutes');
 const contactRoutes = require('./routes/contactRoutes');
 const verificationRoutes = require('./routes/verificationRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const puzzleRoutes = require('./routes/puzzleRoutes');
+// const adminPuzzleRoutes = require('./routes/adminPuzzleRoutes');
 
 // Routes
 app.use('/api/tournaments', tournamentRoutes);
@@ -86,6 +88,9 @@ app.use('/api/wallet', walletRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/users/verification', verificationRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/puzzles', puzzleRoutes);
+
+// app.use('/api/admin', adminPuzzleRoutes);
 
 // JWT Authentication debug endpoint
 app.get('/api/auth-status', (req, res) => {
