@@ -19,6 +19,10 @@ const ChessPuzzleSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  hints: {
+    type: [String],
+    default: []
+  },
   tags: {
     type: [String],
     default: []

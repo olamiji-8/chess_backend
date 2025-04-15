@@ -1,14 +1,8 @@
-const express = require('express');
-const router = express.Router();
-const auth = require('../middleware/auth');
-const admin = require('../middleware/admin');
-const { check, validationResult } = require('express-validator');
-const ChessPuzzle = require('../models/ChessPuzzle');
+const ChessPuzzle = require('../models/Puzzle');
+const Reward = require('../models/Reward');
 
-// @route   GET /api/admin/puzzles
-// @desc    Get all puzzles with pagination
-// @access  Admin
-router.get('/puzzles', [auth, admin], async (req, res) => {
+// Get all puzzles with pagination
+exports.getAllPuzzles = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -29,33 +23,19 @@ router.get('/puzzles', [auth, admin], async (req, res) => {
     console.error('Error fetching puzzles:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
-});
+};
 
-// @route   POST /api/admin/puzzles
-// @desc    Create a new puzzle
-// @access  Admin
-router.post('/puzzles', [
-  auth,
-  admin,
-  [
-    check('fen', 'FEN position is required').not().isEmpty(),
-    check('solution', 'Solution moves are required').isArray().not().isEmpty(),
-    check('difficulty', 'Valid difficulty is required').isIn(['easy', 'intermediate', 'hard'])
-  ]
-], async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
-  
+// Create a new puzzle
+exports.createPuzzle = async (req, res) => {
   try {
-    const { fen, solution, difficulty, description, tags } = req.body;
+    const { fen, solution, difficulty, description, hints, tags } = req.body;
     
     const newPuzzle = new ChessPuzzle({
       fen,
       solution,
       difficulty,
       description,
+      hints,
       tags
     });
     
@@ -65,14 +45,12 @@ router.post('/puzzles', [
     console.error('Error creating puzzle:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
-});
+};
 
-// @route   PUT /api/admin/puzzles/:id
-// @desc    Update a puzzle
-// @access  Admin
-router.put('/puzzles/:id', [auth, admin], async (req, res) => {
+// Update a puzzle
+exports.updatePuzzle = async (req, res) => {
   try {
-    const { fen, solution, difficulty, description, tags } = req.body;
+    const { fen, solution, difficulty, description, hints, tags } = req.body;
     
     let puzzle = await ChessPuzzle.findById(req.params.id);
     
@@ -85,6 +63,7 @@ router.put('/puzzles/:id', [auth, admin], async (req, res) => {
       solution: solution || puzzle.solution,
       difficulty: difficulty || puzzle.difficulty,
       description: description !== undefined ? description : puzzle.description,
+      hints: hints !== undefined ? hints : puzzle.hints,
       tags: tags !== undefined ? tags : puzzle.tags
     };
     
@@ -99,12 +78,10 @@ router.put('/puzzles/:id', [auth, admin], async (req, res) => {
     console.error('Error updating puzzle:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
-});
+};
 
-// @route   DELETE /api/admin/puzzles/:id
-// @desc    Delete a puzzle
-// @access  Admin
-router.delete('/puzzles/:id', [auth, admin], async (req, res) => {
+// Delete a puzzle
+exports.deletePuzzle = async (req, res) => {
   try {
     const puzzle = await ChessPuzzle.findById(req.params.id);
     
@@ -119,12 +96,10 @@ router.delete('/puzzles/:id', [auth, admin], async (req, res) => {
     console.error('Error deleting puzzle:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
-});
+};
 
-// @route   POST /api/admin/puzzles/batch
-// @desc    Add multiple puzzles at once
-// @access  Admin
-router.post('/puzzles/batch', [auth, admin], async (req, res) => {
+// Add multiple puzzles at once
+exports.addBatchPuzzles = async (req, res) => {
   try {
     const { puzzles } = req.body;
     
@@ -142,6 +117,44 @@ router.post('/puzzles/batch', [auth, admin], async (req, res) => {
     console.error('Error adding batch puzzles:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
-});
+};
 
-module.exports = router;
+// Get reward milestones
+exports.getRewards = async (req, res) => {
+  try {
+    const rewards = await Reward.find().sort({ streakMilestone: 1 });
+    res.json(rewards);
+  } catch (err) {
+    console.error('Error getting rewards:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+};
+
+// Create/update a reward milestone
+exports.upsertReward = async (req, res) => {
+  try {
+    const { streakMilestone, tokenAmount, description } = req.body;
+    
+    let reward = await Reward.findOne({ streakMilestone });
+    
+    if (reward) {
+      // Update existing
+      reward.tokenAmount = tokenAmount;
+      reward.description = description;
+      await reward.save();
+    } else {
+      // Create new
+      reward = new Reward({
+        streakMilestone,
+        tokenAmount,
+        description
+      });
+      await reward.save();
+    }
+    
+    res.json(reward);
+  } catch (err) {
+    console.error('Error managing reward:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+};

@@ -1,8 +1,10 @@
 const passport = require('passport');
-const jwt = require('jsonwebtoken');
 const asyncHandler = require('express-async-handler');
 
-// Middleware to protect routes with JWT
+/**
+ * Combined middleware for authentication and admin role verification
+ * First authenticates the user with JWT, then verifies admin role
+ */
 exports.protect = asyncHandler(async (req, res, next) => {
   passport.authenticate('jwt', { session: false }, (err, user, info) => {
     if (err) {
@@ -10,7 +12,7 @@ exports.protect = asyncHandler(async (req, res, next) => {
     }
     
     if (!user) {
-      return res.status(401).json({ 
+      return res.status(401).json({
         message: 'Not authorized, authentication failed',
         details: info ? info.message : 'Invalid or expired token'
       });
@@ -21,13 +23,25 @@ exports.protect = asyncHandler(async (req, res, next) => {
   })(req, res, next);
 });
 
-// Admin Middleware
+/**
+ * Middleware to verify admin role
+ * Assumes authentication has already been performed
+ */
 exports.adminOnly = asyncHandler(async (req, res, next) => {
-  if (req.user && req.user.role === 'admin') {
-    next();
-  } else {
-    res.status(403).json({ message: 'Not authorized as admin' });
+  if (!req.user) {
+    return res.status(401).json({ message: 'No authentication token, authorization denied' });
   }
+  
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Not authorized as admin' });
+  }
+  
+  next();
 });
 
-exports.admin = exports.adminOnly;
+/**
+ * Combined middleware that performs both authentication and admin verification
+ */
+exports.admin = [exports.protect, exports.adminOnly];
+
+module.exports = exports;

@@ -37,6 +37,14 @@ const UserPuzzleProgressSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  tokens: {
+    type: Number,
+    default: 0
+  },
+  lastPuzzle: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ChessPuzzle'
+  },
   puzzleHistory: [{
     puzzle: {
       type: mongoose.Schema.Types.ObjectId,
@@ -49,6 +57,10 @@ const UserPuzzleProgressSchema = new mongoose.Schema({
     attempts: {
       type: Number,
       default: 0
+    },
+    hintsUsed: {
+      type: Boolean,
+      default: false
     },
     date: {
       type: Date,
