@@ -67,6 +67,72 @@ exports.registerUser = asyncHandler(async (req, res) => {
   }
 });
 
+/**
+ * @desc    Create a new admin user
+ * @route   POST /api/admin/create-admin
+ * @access  Admin only
+ */
+exports.createAdmin = asyncHandler(async (req, res) => {
+  const { fullName, email, password, phoneNumber } = req.body;
+
+  // Validate required fields
+  if (!fullName || !email || !password) {
+    return res.status(400).json({
+      success: false,
+      message: 'Please provide all required fields'
+    });
+  }
+
+  try {
+    // Check if user already exists
+    const userExists = await User.findOne({ email });
+    if (userExists) {
+      return res.status(400).json({
+        success: false,
+        message: 'User with this email already exists'
+      });
+    }
+
+    // Create new admin user
+    const admin = await User.create({
+      fullName,
+      email,
+      password, // Password will be hashed via pre-save hook
+      phoneNumber: phoneNumber || '',
+      role: 'admin',
+      isVerified: true // Auto-verify admin accounts
+    });
+
+    // Create token for immediate login
+    const token = jwt.sign(
+      { id: admin._id },
+      process.env.JWT_SECRET || 'fallbacksecret', // Add fallback for testing
+      { expiresIn: '30d' }
+    );
+
+    // Return success response without password
+    res.status(201).json({
+      success: true,
+      message: 'Admin user created successfully',
+      data: {
+        _id: admin._id,
+        fullName: admin.fullName,
+        email: admin.email,
+        role: admin.role,
+        isVerified: admin.isVerified,
+        token: token
+      }
+    });
+  } catch (error) {
+    console.error('Error creating admin user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create admin user',
+      error: error.message
+    });
+  }
+});
+
 
 // @desc    Login user
 // @route   POST /api/users/login
