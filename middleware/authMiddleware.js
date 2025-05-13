@@ -1,117 +1,98 @@
-// authMiddleware.js
-const passport = require('passport');
-const JwtStrategy = require('passport-jwt').Strategy;
-const ExtractJwt = require('passport-jwt').ExtractJwt;
-const User = require('../models/User'); // Update the path to your User model
-const asyncHandler = require('express-async-handler');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
 
 /**
- * Configure Passport JWT strategy
- * @param {Object} passport - Passport instance
+ * Middleware to authenticate users based on JWT token
+ * This middleware verifies the token and attaches the user to the request object
  */
-exports.configureJWT = () => {
-  const options = {
-    jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-    secretOrKey: process.env.JWT_SECRET || 'your_jwt_secret',
-    // Increase debugging
-    passReqToCallback: true
-  };
-
-  passport.use(
-    new JwtStrategy(options, async (req, jwtPayload, done) => {
-      try {
-        // Log for debugging
-        console.log('JWT Payload:', jwtPayload);
-        
-        // Ensure the JWT payload has a user ID
-        if (!jwtPayload.id && !jwtPayload._id) {
-          console.error('Missing user ID in JWT payload');
-          return done(null, false, { message: 'Invalid token: missing user ID' });
-        }
-        
-        // Find user by ID
-        const userId = jwtPayload.id || jwtPayload._id;
-        const user = await User.findById(userId).select('+role');
-        
-        if (!user) {
-          console.error(`User with ID ${userId} not found`);
-          return done(null, false, { message: 'User not found' });
-        }
-        
-        // Log found user for debugging
-        console.log(`User found: ${user.email}, Role: ${user.role}`);
-        
-        return done(null, user);
-      } catch (error) {
-        console.error('JWT Strategy Error:', error);
-        return done(error, false);
+exports.protect = async (req, res, next) => {
+  try {
+    let token;
+    
+    // Get token from Authorization header
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      token = req.headers.authorization.split(' ')[1];
+      console.log('Token found in request');
+    }
+    
+    // Check if token exists
+    if (!token) {
+      console.log('No token found in request');
+      return res.status(401).json({
+        success: false,
+        message: 'Not authenticated'
+      });
+    }
+    
+    try {
+      // Verify token using JWT
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallbacksecret');
+      console.log('Token decoded, user ID:', decoded.id || decoded.userId);
+      
+      // Find user by id - use either id or userId from token
+      const userId = decoded.id || decoded.userId;
+      const user = await User.findById(userId).select('-password');
+      
+      if (!user) {
+        console.log('User not found with ID:', userId);
+        return res.status(401).json({
+          success: false,
+          message: 'User not found'
+        });
       }
-    })
-  );
+      
+      // Attach user to request object so next middleware can use it
+      req.user = user;
+      console.log('User authenticated successfully:', user._id);
+      next();
+    } catch (error) {
+      console.error('Token verification failed:', error.message);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token'
+      });
+    }
+  } catch (error) {
+    console.error('Authentication error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
 };
 
 /**
- * Middleware to protect routes - verify JWT token with detailed logging
- * @access  Private
+ * Middleware to restrict access to admin users only
+ * MUST be used after authenticate middleware
  */
-exports.protect = asyncHandler(async (req, res, next) => {
-  // Log the incoming authorization header for debugging
-  console.log('Auth Header:', req.headers.authorization);
-  
-  passport.authenticate('jwt', { session: false }, (err, user, info) => {
-    if (err) {
-      console.error('Passport Auth Error:', err);
-      return res.status(500).json({ 
-        success: false,
-        message: 'Internal server error during authentication',
-        error: err.message
-      });
-    }
-    
-    if (!user) {
-      console.error('Authentication Failed:', info ? info.message : 'Unknown reason');
+exports.adminOnly = async (req, res, next) => {
+  try {
+    // Make sure req.user exists (set by authenticate middleware)
+    if (!req.user) {
+      console.log('Admin check failed: No authenticated user');
       return res.status(401).json({
         success: false,
-        message: 'Not authorized, authentication failed',
-        details: info ? info.message : 'Invalid or expired token'
+        message: 'Not authenticated'
       });
     }
     
-    // Log successful authentication
-    console.log(`User authenticated: ${user.email} (${user._id}), Role: ${user.role}`);
+    // Check if user role is admin
+    console.log('Checking admin permissions for user:', req.user._id);
+    if (req.user.role !== 'admin') {
+      console.log('User is not admin:', req.user._id);
+      return res.status(403).json({
+        success: false,
+        message: 'Admin access required'
+      });
+    }
     
-    req.user = user;
+    console.log('Admin access granted for user:', req.user._id);
     next();
-  })(req, res, next);
-});
-
-/**
- * Middleware to restrict routes to admin users only with detailed logging
- * @access  Private/Admin
- */
-exports.adminOnly = asyncHandler(async (req, res, next) => {
-  console.log('Checking admin permissions for user:', req.user ? req.user._id : 'No user');
-  
-  if (!req.user) {
-    console.error('Admin check failed: No authenticated user');
-    return res.status(401).json({
+  } catch (error) {
+    console.error('Admin middleware error:', error);
+    res.status(500).json({
       success: false,
-      message: 'Not authenticated'
+      message: 'Server error'
     });
   }
-
-  console.log(`User role: ${req.user.role}`);
-  
-  if (req.user.role !== 'admin') {
-    console.error(`Admin access denied for user ${req.user._id}: Role is ${req.user.role}`);
-    return res.status(403).json({
-      success: false,
-      message: 'Not authorized as admin'
-    });
-  }
-
-  console.log(`Admin access granted for user ${req.user._id}`);
-  next();
-});
-
-module.exports = exports;
+};

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
-const { adminOnly } = require('../middleware/authMiddleware');
+const { protect, adminOnly, protectAdminRoute } = require('../middleware/authMiddleware');
 const adminController = require('../controllers/adminDashboard');
 
 
@@ -10,7 +10,7 @@ const adminController = require('../controllers/adminDashboard');
 router.post('/create-admin', adminController.createAdmin);
 router.put('/set-admin/:userId',adminOnly, adminController.setUserAsAdmin);
 router.put('/remove-admin/:userId',adminOnly, adminController.removeAdminPrivileges);
-router.put('/admins',adminOnly, adminController.getAllAdmins);
+router.get('/admins', protect, adminOnly, adminController.getAllAdmins);
 router.post('/login', adminController.adminLogin);
 
 
@@ -147,6 +147,7 @@ router.get('/stats',  async (req, res) => {
     });
   }
 });
+
 
 // Player management routes
 router.get('/players', adminOnly,adminController.getAllPlayers);
