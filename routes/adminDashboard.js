@@ -8,14 +8,14 @@ const adminController = require('../controllers/adminDashboard');
 
 // Admin user management routes
 router.post('/create-admin', adminController.createAdmin);
-router.put('/set-admin/:userId',adminOnly, adminController.setUserAsAdmin);
-router.put('/remove-admin/:userId',adminOnly, adminController.removeAdminPrivileges);
+router.put('/set-admin/:userId',protect, adminOnly, adminController.setUserAsAdmin);
+router.put('/remove-admin/:userId',protect, adminOnly, adminController.removeAdminPrivileges);
 router.get('/admins', protect, adminOnly, adminController.getAllAdmins);
 router.post('/login', adminController.adminLogin);
 
 
 // Admin dashboard
-router.get('/dashboard',adminController.getDashboardStats);
+router.get('/dashboard',protect, adminOnly, adminController.getDashboardStats);
 
 // // Stats route (from your existing code)
 router.get('/stats',  async (req, res) => {
@@ -150,13 +150,13 @@ router.get('/stats',  async (req, res) => {
 
 
 // Player management routes
-router.get('/players', adminOnly,adminController.getAllPlayers);
-router.get('/players/:userId',adminOnly, adminController.getPlayerDetails);
-router.get('/players/:userId/download',adminOnly,  adminController.downloadPlayerData);
-router.get('/players/:userId/profilepic',adminOnly,  adminController.downloadProfilePicture);
-router.put('/players/:userId/status', adminOnly, adminController.updatePlayerStatus);
-router.put('/players/:userId/ban',adminOnly,  adminController.banPlayer);
-router.put('/players/:userId/unban',adminOnly,  adminController.unbanPlayer);
+router.get('/players', protect, adminOnly,adminController.getAllPlayers);
+router.get('/players/:userId',protect, adminOnly, adminController.getPlayerDetails);
+router.get('/players/:userId/download',protect, adminOnly,  adminController.downloadPlayerData);
+router.get('/players/:userId/profilepic',protect, adminOnly,  adminController.downloadProfilePicture);
+router.put('/players/:userId/status', protect, adminOnly, adminController.updatePlayerStatus);
+router.put('/players/:userId/ban',protect, adminOnly,  adminController.banPlayer);
+router.put('/players/:userId/unban',protect, adminOnly,  adminController.unbanPlayer);
 
 // /**
 //  * VERIFICATION MANAGEMENT 
@@ -164,19 +164,19 @@ router.put('/players/:userId/unban',adminOnly,  adminController.unbanPlayer);
 
 
 // Get all verification requests with pagination and filtering
-router.get('/', adminOnly, adminController.getAllVerifications);
+router.get('/', protect, adminOnly, adminController.getAllVerifications);
 
 // Get single verification details
-router.get('/:requestId', adminOnly, adminController.getVerificationDetails);
+router.get('/:requestId', protect, adminOnly, adminController.getVerificationDetails);
 
 // Approve a verification request
-router.put('/:requestId/approve', adminOnly, adminController.approveVerification);
+router.put('/:requestId/approve', protect, adminOnly, adminController.approveVerification);
 
 // Reject a verification request
-router.put('/:requestId/reject', adminOnly, adminController.rejectVerification);
+router.put('/:requestId/reject', protect, adminOnly, adminController.rejectVerification);
 
 // Download verification documents
-router.get('/:requestId/download', adminOnly, adminController.downloadVerificationData);
+router.get('/:requestId/download', protect, adminOnly, adminController.downloadVerificationData);
 
 // /**
 //  * WITHDRAWAL MANAGEMENT
@@ -186,38 +186,38 @@ router.get('/:requestId/download', adminOnly, adminController.downloadVerificati
 // // Base route: /api/admin/withdrawals
 
 // // Get withdrawal statistics
-router.get('/admin/withdrawals/stats', adminOnly, adminController.getWithdrawalStats);
+router.get('/admin/withdrawals/stats', protect, adminOnly, adminController.getWithdrawalStats);
 
 // // Download withdrawal data - needs to be before the /:id route to avoid conflicts
-router.get('/admin/withdrawals/download', adminOnly, adminController.downloadWithdrawals);
+router.get('/admin/withdrawals/download', protect, adminOnly, adminController.downloadWithdrawals);
 
 // // Get all withdrawals with pagination and filtering
-router.get('/admin/withdrawals/', adminOnly, adminController.getAllWithdrawals);
+router.get('/admin/withdrawals/', protect, adminOnly, adminController.getAllWithdrawals);
 
 // // Get withdrawal by ID
-router.get('/admin/withdrawals/:id', adminOnly, adminController.getWithdrawalById);
+router.get('/admin/withdrawals/:id', protect, adminOnly, adminController.getWithdrawalById);
 
 // // Update withdrawal status
-router.put('/admin/withdrawals/:id/status', adminOnly, adminController.updateWithdrawalStatus);
+router.put('/admin/withdrawals/:id/status', protect, adminOnly, adminController.updateWithdrawalStatus);
 
 
 // /**
 //  * TOURNAMENT MANAGEMENT
 //  */
 
-router.get('/download',adminOnly, adminController.downloadTournaments);
+router.get('/download',protect, adminOnly, adminController.downloadTournaments);
 
 // // Get all tournaments with pagination
-router.get('/',adminOnly, adminController.getAllTournaments);
+router.get('/',protect, adminOnly, adminController.getAllTournaments);
 
 // // Get tournament by ID
-router.get('/:tournamentId',adminOnly, adminController.getTournamentById);
+router.get('/:tournamentId',protect, adminOnly, adminController.getTournamentById);
 
 // // Update tournament status
-router.put('/:tournamentId/status',adminOnly, adminController.updateTournamentStatus);
+router.put('/:tournamentId/status',protect, adminOnly, adminController.updateTournamentStatus);
 
 // // Delete tournament
-router.delete('/:tournamentId',adminOnly, adminController.deleteTournament);
+router.delete('/:tournamentId',protect, adminOnly, adminController.deleteTournament);
 
 // /**
 //  * ADMIN ACCOUNT SETTINGS
@@ -226,24 +226,24 @@ router.delete('/:tournamentId',adminOnly, adminController.deleteTournament);
 
 
 // // Update admin profile
-router.put('/profile',adminOnly,  adminController.updateProfile);
+router.put('/profile',protect, adminOnly,  adminController.updateProfile);
 
 // // Update admin profile picture
-router.put('/profile/picture', adminOnly, adminController.updateProfilePicture);
+router.put('/profile/picture', protect, adminOnly, adminController.updateProfilePicture);
 
 // // Change admin password
-router.put('/profile/password', adminOnly, adminController.changePassword);
+router.put('/profile/password', protect, adminOnly, adminController.changePassword);
 
 // /**
 //  * ADMIN ANALYTICS & REPORTING
 //  */
 // // Get advanced analytics
-router.get('/analytics', adminOnly, adminController.getAnalytics);
+router.get('/analytics', protect, adminOnly, adminController.getAnalytics);
 
 // // Get recent activity feed
-router.get('/activity', adminOnly, adminController.getActivityFeed);
+router.get('/activity', protect, adminOnly, adminController.getActivityFeed);
 
 // // Generate monthly report
-router.get('/reports/monthly', adminOnly,adminController.getMonthlyReport);
+router.get('/reports/monthly', protect, adminOnly,adminController.getMonthlyReport);
 
 module.exports = router;

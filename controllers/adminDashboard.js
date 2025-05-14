@@ -6,6 +6,7 @@ const asyncHandler = require('express-async-handler');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const generateToken = require('../utils/generateToken');
+const mongoose = require('mongoose');
 
 /**
  * @desc    Create a new admin user
