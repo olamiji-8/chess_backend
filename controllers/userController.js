@@ -67,7 +67,7 @@ exports.registerUser = asyncHandler(async (req, res) => {
   }
 });
 
-/**
+/**    
  * @desc    Create a new admin user
  * @route   POST /api/admin/create-admin
  * @access  Admin only
