@@ -201,6 +201,7 @@ router.get('/admin/withdrawals/:id', protect, adminOnly, adminController.getWith
 // // Update withdrawal status
 router.put('/admin/withdrawals/:id/status', protect, adminOnly, adminController.updateWithdrawalStatus);
 
+router.get('/statistics/all', protect, adminOnly, adminController.getStatistics);
 
 // /**
 //  * TOURNAMENT MANAGEMENT

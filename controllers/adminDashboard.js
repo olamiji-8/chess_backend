@@ -309,6 +309,236 @@ exports.checkAdminStatus = asyncHandler(async (req, res) => {
   }
 });
 
+
+/**
+ * @desc    Get platform statistics
+ * @route   GET /api/statistics
+ * @access  Admin
+ */
+exports.getStatistics = async (req, res) => {
+  try {
+    // Get total tournaments count
+    const totalTournaments = await Tournament.countDocuments();
+    
+    // Get total players count (all users with role 'user')
+    const totalPlayers = await User.countDocuments({ role: 'user' });
+    
+    // Get total organizers count (users who have created at least one tournament)
+    const totalOrganizers = await User.countDocuments({
+      createdTournaments: { $exists: true, $not: { $size: 0 } }
+    });
+    
+    // Get active tournaments count
+    const activeTournaments = await Tournament.countDocuments({ status: 'active' });
+    
+    const stats = [
+      {
+        title: 'Total Tournaments',
+        count: totalTournaments,
+      },
+      {
+        title: 'Total Players',
+        count: totalPlayers,
+      },
+      {
+        title: 'Total Organizers',
+        count: totalOrganizers,
+      },
+      {
+        title: 'Active Tournaments',
+        count: activeTournaments,
+      },
+    ];
+    
+    res.status(200).json({
+      success: true,
+      data: stats
+    });
+    
+  } catch (error) {
+    console.error('Statistics error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching statistics'
+    });
+  }
+};
+
+/**
+ * @desc    Get platform statistics
+ * @route   GET /api/stats
+ * @access  Public
+ */
+exports.getPlatformStats = asyncHandler(async (req, res) => {
+  try {
+    console.log('Fetching platform stats...');
+    
+    // Get total tournaments count
+    const totalTournaments = await Tournament.countDocuments();
+    
+    // Get total players count (all users)
+    const totalPlayers = await User.countDocuments({ role: 'user' });
+    
+    // Get total organizers count (users who have created at least one tournament)
+    const totalOrganizers = await User.countDocuments({
+      createdTournaments: { $exists: true, $not: { $size: 0 } }
+    });
+    
+    // Get active tournaments count
+    const activeTournaments = await Tournament.countDocuments({ status: 'active' });
+    
+    const stats = [
+      {
+        title: 'Total Tournaments',
+        count: totalTournaments,
+      },
+      {
+        title: 'Total Players',
+        count: totalPlayers,
+      },
+      {
+        title: 'Total Organizers',
+        count: totalOrganizers,
+      },
+      {
+        title: 'Active Tournaments',
+        count: activeTournaments,
+      },
+    ];
+    
+    res.status(200).json({
+      success: true,
+      data: stats
+    });
+    
+  } catch (error) {
+    console.error('Error getting platform stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching statistics',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @desc    Get detailed statistics (for admin dashboard)
+ * @route   GET /api/stats/detailed
+ * @access  Private (Admin only)
+ */
+exports.getDetailedStats = asyncHandler(async (req, res) => {
+  try {
+    console.log('Fetching detailed stats...');
+    
+    // Basic stats
+    const totalTournaments = await Tournament.countDocuments();
+    const totalPlayers = await User.countDocuments({ role: 'user' });
+    const totalOrganizers = await User.countDocuments({
+      createdTournaments: { $exists: true, $not: { $size: 0 } }
+    });
+    const activeTournaments = await Tournament.countDocuments({ status: 'active' });
+    
+    // Additional detailed stats
+    const upcomingTournaments = await Tournament.countDocuments({ status: 'upcoming' });
+    const completedTournaments = await Tournament.countDocuments({ status: 'completed' });
+    const cancelledTournaments = await Tournament.countDocuments({ status: 'cancelled' });
+    
+    // Tournament category distribution
+    const bulletTournaments = await Tournament.countDocuments({ category: 'bullet' });
+    const blitzTournaments = await Tournament.countDocuments({ category: 'blitz' });
+    const rapidTournaments = await Tournament.countDocuments({ category: 'rapid' });
+    const classicalTournaments = await Tournament.countDocuments({ category: 'classical' });
+    
+    // User stats
+    const verifiedUsers = await User.countDocuments({ isVerified: true });
+    const unverifiedUsers = await User.countDocuments({ isVerified: false });
+    const usersWithLichess = await User.countDocuments({ lichessUsername: { $exists: true, $ne: '' } });
+    
+    // Transaction stats (if available)
+    let totalTransactionAmount = 0;
+    let totalTransactionCount = 0;
+    
+    try {
+      const transactionStats = await Transaction.aggregate([
+        {
+          $group: {
+            _id: null,
+            totalAmount: { $sum: '$amount' },
+            count: { $sum: 1 }
+          }
+        }
+      ]);
+      
+      if (transactionStats.length > 0) {
+        totalTransactionAmount = transactionStats[0].totalAmount;
+        totalTransactionCount = transactionStats[0].count;
+      }
+    } catch (transactionError) {
+      console.error('Error getting transaction stats:', transactionError);
+    }
+    
+    const basicStats = [
+      {
+        title: 'Total Tournaments',
+        count: totalTournaments,
+      },
+      {
+        title: 'Total Players',
+        count: totalPlayers,
+      },
+      {
+        title: 'Total Organizers',
+        count: totalOrganizers,
+      },
+      {
+        title: 'Active Tournaments',
+        count: activeTournaments,
+      },
+    ];
+    
+    const tournamentStats = {
+      active: activeTournaments,
+      upcoming: upcomingTournaments,
+      completed: completedTournaments,
+      cancelled: cancelledTournaments,
+      categories: {
+        bullet: bulletTournaments,
+        blitz: blitzTournaments,
+        rapid: rapidTournaments,
+        classical: classicalTournaments
+      }
+    };
+    
+    const userStats = {
+      total: totalPlayers,
+      verified: verifiedUsers,
+      unverified: unverifiedUsers,
+      withLichess: usersWithLichess
+    };
+    
+    const financialStats = {
+      totalTransactions: totalTransactionCount,
+      totalAmount: totalTransactionAmount
+    };
+    
+    res.status(200).json({
+      success: true,
+      basicStats,
+      tournamentStats,
+      userStats,
+      financialStats
+    });
+    
+  } catch (error) {
+    console.error('Error getting detailed stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching detailed statistics',
+      error: error.message
+    });
+  }
+});
+
 /**
 * @desc    Get dashboard statistics for admin
 * @route   GET /api/admin/dashboard
