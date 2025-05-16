@@ -1831,6 +1831,107 @@ exports.getAllPlayers = async (req, res) => {
     }
   };
   
+
+  /**
+ * @desc    Download player data with pagination
+ * @route   GET /api/admin/players/download
+ * @access  Private/Admin
+ */
+exports.downloadPaginatedPlayerData = async (req, res) => {
+  console.log('downloadingPaginatedPlayerData');
+  try {
+    // Extract pagination parameters from query
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+    
+    // Get total count for pagination info
+    const totalUsers = await User.countDocuments();
+    const totalPages = Math.ceil(totalUsers / limit);
+    
+    // Get users with pagination
+    const users = await User.find()
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+    
+    // Prepare data array to hold all user data
+    const usersData = [];
+    
+    // Process each user to gather their data
+    for (const user of users) {
+      // Get all user-related data
+      const createdTournaments = await Tournament.find({
+        organizer: user._id
+      }).select('title startDate status participants category').lean();
+      
+      const registeredTournaments = await Tournament.find({
+        participants: user._id
+      }).select('title startDate status category').lean();
+      
+      const transactions = await Transaction.find({
+        user: user._id
+      }).sort({ createdAt: -1 }).lean();
+      
+      const verificationHistory = await VerificationRequest.find({
+        user: user._id
+      }).sort({ updatedAt: -1 }).lean();
+      
+      // Create data object for each user
+      const userData = {
+        personalInfo: {
+          _id: user._id,
+          fullName: user.fullName,
+          email: user.email,
+          lichessUsername: user.lichessUsername,
+          phoneNumber: user.phoneNumber,
+          isVerified: user.isVerified,
+          walletBalance: user.walletBalance,
+          createdAt: user.createdAt,
+          bankDetails: user.bankDetails || {}
+        },
+        tournaments: {
+          created: createdTournaments,
+          registered: registeredTournaments
+        },
+        transactions: transactions,
+        verificationHistory: verificationHistory
+      };
+      
+      usersData.push(userData);
+    }
+    
+    // Create response object with pagination info
+    const responseData = {
+      success: true,
+      pagination: {
+        currentPage: page,
+        totalPages: totalPages,
+        limit: limit,
+        totalUsers: totalUsers
+      },
+      data: usersData
+    };
+    
+    // Set headers for file download
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename=players_page${page}_limit${limit}.json`);
+    
+    // Send the data as a downloadable file
+    res.status(200).json(responseData);
+  } catch (error) {
+    console.error('Error downloading paginated player data:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error downloading paginated player data',
+      error: error.message
+    });
+  }
+};
+
+
+
   /**
    * @desc    Download profile picture
    * @route   GET /api/admin/players/:userId/profilepic

@@ -153,6 +153,7 @@ router.get('/stats',  async (req, res) => {
 router.get('/players', protect, adminOnly,adminController.getAllPlayers);
 router.get('/players/:userId',protect, adminOnly, adminController.getPlayerDetails);
 router.get('/players/:userId/download',protect, adminOnly,  adminController.downloadPlayerData);
+router.get('/players/download/all',protect, adminOnly,  adminController.downloadPaginatedPlayerData);
 router.get('/players/:userId/profilepic',protect, adminOnly,  adminController.downloadProfilePicture);
 router.put('/players/:userId/status', protect, adminOnly, adminController.updatePlayerStatus);
 router.put('/players/:userId/ban',protect, adminOnly,  adminController.banPlayer);
