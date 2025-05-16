@@ -248,4 +248,9 @@ router.get('/activity', protect, adminOnly, adminController.getActivityFeed);
 // // Generate monthly report
 router.get('/reports/monthly', protect, adminOnly,adminController.getMonthlyReport);
 
+// Activity logs
+router.get('/activity/log', protect, adminOnly, adminController.getActivityLogs);
+router.get('/activity/summary', protect, adminOnly, adminController.getActivitySummary);
+router.post('/activity/log', protect, adminOnly, adminController.createActivityLog);
+
 module.exports = router;

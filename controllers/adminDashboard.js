@@ -2,11 +2,13 @@ const User = require('../models/User');
 const Tournament = require('../models/Tournament');
 const Transaction = require('../models/Transaction');
 const VerificationRequest = require('../models/verification');
+const ActivityLog = require('../models/ActivityLog');
 const asyncHandler = require('express-async-handler');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const generateToken = require('../utils/generateToken');
 const mongoose = require('mongoose');
+
 
 /**
  * @desc    Create a new admin user
@@ -369,175 +371,7 @@ exports.getStatistics = async (req, res) => {
  * @route   GET /api/stats
  * @access  Public
  */
-exports.getPlatformStats = asyncHandler(async (req, res) => {
-  try {
-    console.log('Fetching platform stats...');
-    
-    // Get total tournaments count
-    const totalTournaments = await Tournament.countDocuments();
-    
-    // Get total players count (all users)
-    const totalPlayers = await User.countDocuments({ role: 'user' });
-    
-    // Get total organizers count (users who have created at least one tournament)
-    const totalOrganizers = await User.countDocuments({
-      createdTournaments: { $exists: true, $not: { $size: 0 } }
-    });
-    
-    // Get active tournaments count
-    const activeTournaments = await Tournament.countDocuments({ status: 'active' });
-    
-    const stats = [
-      {
-        title: 'Total Tournaments',
-        count: totalTournaments,
-      },
-      {
-        title: 'Total Players',
-        count: totalPlayers,
-      },
-      {
-        title: 'Total Organizers',
-        count: totalOrganizers,
-      },
-      {
-        title: 'Active Tournaments',
-        count: activeTournaments,
-      },
-    ];
-    
-    res.status(200).json({
-      success: true,
-      data: stats
-    });
-    
-  } catch (error) {
-    console.error('Error getting platform stats:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching statistics',
-      error: error.message
-    });
-  }
-});
 
-/**
- * @desc    Get detailed statistics (for admin dashboard)
- * @route   GET /api/stats/detailed
- * @access  Private (Admin only)
- */
-exports.getDetailedStats = asyncHandler(async (req, res) => {
-  try {
-    console.log('Fetching detailed stats...');
-    
-    // Basic stats
-    const totalTournaments = await Tournament.countDocuments();
-    const totalPlayers = await User.countDocuments({ role: 'user' });
-    const totalOrganizers = await User.countDocuments({
-      createdTournaments: { $exists: true, $not: { $size: 0 } }
-    });
-    const activeTournaments = await Tournament.countDocuments({ status: 'active' });
-    
-    // Additional detailed stats
-    const upcomingTournaments = await Tournament.countDocuments({ status: 'upcoming' });
-    const completedTournaments = await Tournament.countDocuments({ status: 'completed' });
-    const cancelledTournaments = await Tournament.countDocuments({ status: 'cancelled' });
-    
-    // Tournament category distribution
-    const bulletTournaments = await Tournament.countDocuments({ category: 'bullet' });
-    const blitzTournaments = await Tournament.countDocuments({ category: 'blitz' });
-    const rapidTournaments = await Tournament.countDocuments({ category: 'rapid' });
-    const classicalTournaments = await Tournament.countDocuments({ category: 'classical' });
-    
-    // User stats
-    const verifiedUsers = await User.countDocuments({ isVerified: true });
-    const unverifiedUsers = await User.countDocuments({ isVerified: false });
-    const usersWithLichess = await User.countDocuments({ lichessUsername: { $exists: true, $ne: '' } });
-    
-    // Transaction stats (if available)
-    let totalTransactionAmount = 0;
-    let totalTransactionCount = 0;
-    
-    try {
-      const transactionStats = await Transaction.aggregate([
-        {
-          $group: {
-            _id: null,
-            totalAmount: { $sum: '$amount' },
-            count: { $sum: 1 }
-          }
-        }
-      ]);
-      
-      if (transactionStats.length > 0) {
-        totalTransactionAmount = transactionStats[0].totalAmount;
-        totalTransactionCount = transactionStats[0].count;
-      }
-    } catch (transactionError) {
-      console.error('Error getting transaction stats:', transactionError);
-    }
-    
-    const basicStats = [
-      {
-        title: 'Total Tournaments',
-        count: totalTournaments,
-      },
-      {
-        title: 'Total Players',
-        count: totalPlayers,
-      },
-      {
-        title: 'Total Organizers',
-        count: totalOrganizers,
-      },
-      {
-        title: 'Active Tournaments',
-        count: activeTournaments,
-      },
-    ];
-    
-    const tournamentStats = {
-      active: activeTournaments,
-      upcoming: upcomingTournaments,
-      completed: completedTournaments,
-      cancelled: cancelledTournaments,
-      categories: {
-        bullet: bulletTournaments,
-        blitz: blitzTournaments,
-        rapid: rapidTournaments,
-        classical: classicalTournaments
-      }
-    };
-    
-    const userStats = {
-      total: totalPlayers,
-      verified: verifiedUsers,
-      unverified: unverifiedUsers,
-      withLichess: usersWithLichess
-    };
-    
-    const financialStats = {
-      totalTransactions: totalTransactionCount,
-      totalAmount: totalTransactionAmount
-    };
-    
-    res.status(200).json({
-      success: true,
-      basicStats,
-      tournamentStats,
-      userStats,
-      financialStats
-    });
-    
-  } catch (error) {
-    console.error('Error getting detailed stats:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching detailed statistics',
-      error: error.message
-    });
-  }
-});
 
 /**
 * @desc    Get dashboard statistics for admin
@@ -2492,6 +2326,233 @@ exports.getWithdrawalStats = async (req, res) => {
     }
   };
   
+
+  /**
+ * Get admin activity logs with filtering and pagination
+ * @route GET /api/admin/activity
+ * @access Private/Admin
+ */
+exports.getActivityLogs = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
+    const skip = (page - 1) * limit;
+    
+    // Build filter object
+    const filter = {};
+    
+    // Apply type filter if provided
+    if (req.query.type) {
+      filter.type = req.query.type;
+    }
+    
+    // Apply status filter if provided
+    if (req.query.status) {
+      filter.status = req.query.status;
+    }
+    
+    // Apply date range filter if provided
+    if (req.query.startDate && req.query.endDate) {
+      filter.createdAt = {
+        $gte: new Date(req.query.startDate),
+        $lte: new Date(req.query.endDate)
+      };
+    }
+    
+    // Get total count for pagination
+    const total = await ActivityLog.countDocuments(filter);
+    
+    // Get activity logs with pagination
+    const activityLogs = await ActivityLog.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate('user', 'fullName email lichessUsername')
+      .populate('adminUser', 'fullName email')
+      .lean();
+    
+    // Format the response data
+    const formattedLogs = activityLogs.map(log => {
+      // Format the date to a readable string
+      const date = new Date(log.createdAt);
+      const formattedDate = date.toLocaleDateString('en-US', {
+        weekday: 'short',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      });
+      
+      return {
+        id: log._id,
+        type: log.type,
+        action: log.action,
+        user: log.user ? log.user.fullName : 'System',
+        email: log.user ? log.user.email : '-',
+        admin: log.adminUser ? log.adminUser.fullName : 'System',
+        status: log.status,
+        date: formattedDate,
+        details: log.details
+      };
+    });
+    
+    // Return response with pagination metadata
+    res.status(200).json({
+      success: true,
+      data: formattedLogs,
+      pagination: {
+        total,
+        page,
+        limit,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Error getting activity logs:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting activity logs',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Get activity summary by type
+ * @route GET /api/admin/activity/summary
+ * @access Private/Admin
+ */
+exports.getActivitySummary = async (req, res) => {
+  try {
+    // Get counts by type for the last 30 days
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const activitySummary = await ActivityLog.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: thirtyDaysAgo }
+        }
+      },
+      {
+        $group: {
+          _id: "$type",
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $sort: { count: -1 }
+      }
+    ]);
+    
+    // Get counts by status
+    const statusSummary = await ActivityLog.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: thirtyDaysAgo }
+        }
+      },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $sort: { count: -1 }
+      }
+    ]);
+    
+    // Get daily activity counts for the last 30 days
+    const dailyActivity = await ActivityLog.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: thirtyDaysAgo }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            year: { $year: "$createdAt" },
+            month: { $month: "$createdAt" },
+            day: { $dayOfMonth: "$createdAt" }
+          },
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 }
+      }
+    ]);
+    
+    // Format the daily activity data
+    const formattedDailyActivity = dailyActivity.map(day => {
+      const date = new Date(day._id.year, day._id.month - 1, day._id.day);
+      return {
+        date: date.toISOString().split('T')[0],
+        count: day.count
+      };
+    });
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        byType: activitySummary,
+        byStatus: statusSummary,
+        dailyActivity: formattedDailyActivity
+      }
+    });
+  } catch (error) {
+    console.error('Error getting activity summary:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting activity summary',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Create manual activity log (for testing or manual entries)
+ * @route POST /api/admin/activity
+ * @access Private/Admin
+ */
+exports.createActivityLog = async (req, res) => {
+  try {
+    const { type, action, status, userId, details } = req.body;
+    
+    // Validate required fields
+    if (!type || !action || !status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Type, action, and status are required'
+      });
+    }
+    
+    // Create activity log
+    const activityLog = await ActivityLog.create({
+      type,
+      action,
+      status,
+      user: userId || null,
+      adminUser: req.user._id,
+      details: details || {}
+    });
+    
+    res.status(201).json({
+      success: true,
+      data: activityLog
+    });
+  } catch (error) {
+    console.error('Error creating activity log:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error creating activity log',
+      error: error.message
+    });
+  }
+};
+
+
   /**
    * @desc    Get all withdrawals with pagination and filtering
    * @route   GET /api/admin/withdrawals
