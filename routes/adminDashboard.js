@@ -165,19 +165,19 @@ router.put('/players/:userId/unban',protect, adminOnly,  adminController.unbanPl
 
 
 // Get all verification requests with pagination and filtering
-router.get('/', protect, adminOnly, adminController.getAllVerifications);
+router.get('/verification', protect, adminOnly, adminController.getAllVerifications);
 
 // Get single verification details
-router.get('/:requestId', protect, adminOnly, adminController.getVerificationDetails);
+router.get('/verification/:requestId', protect, adminOnly, adminController.getVerificationDetails);
 
 // Approve a verification request
-router.put('/:requestId/approve', protect, adminOnly, adminController.approveVerification);
+router.put('/verification/:requestId/approve', protect, adminOnly, adminController.approveVerification);
 
 // Reject a verification request
-router.put('/:requestId/reject', protect, adminOnly, adminController.rejectVerification);
+router.put('/verification/:requestId/reject', protect, adminOnly, adminController.rejectVerification);
 
 // Download verification documents
-router.get('/:requestId/download', protect, adminOnly, adminController.downloadVerificationData);
+router.get('/verification/:requestId/download', protect, adminOnly, adminController.downloadVerificationData);
 
 // /**
 //  * WITHDRAWAL MANAGEMENT

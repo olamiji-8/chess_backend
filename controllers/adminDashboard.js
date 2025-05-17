@@ -531,56 +531,58 @@ exports.getAllVerifications = asyncHandler(async (req, res) => {
    * @route   PUT /api/admin/verifications/:requestId/approve
    * @access  Admin only
    */
-  exports.approveVerification = asyncHandler(async (req, res) => {
-    try {
-      const requestId = req.params.requestId;
-  
-      if (!mongoose.Types.ObjectId.isValid(requestId)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid request ID'
-        });
-      }
-  
-      const verificationRequest = await VerificationRequest.findById(requestId);
-  
-      if (!verificationRequest) {
-        return res.status(404).json({
-          success: false,
-          message: 'Verification request not found'
-        });
-      }
-  
-      // Update verification request status
-      verificationRequest.status = 'approved';
-      verificationRequest.updatedAt = Date.now();
-      await verificationRequest.save();
-  
-      // Update user's verification status
-      const user = await User.findById(verificationRequest.user);
-      if (user) {
-        user.isVerified = true;
-        await user.save();
-  
-        // Here you would typically send a notification
-        // Placeholder for notification logic
-        console.log(`User ${user._id} has been verified!`);
-      }
-  
-      res.status(200).json({
-        success: true,
-        message: 'Verification request approved successfully',
-        data: verificationRequest
-      });
-    } catch (error) {
-      console.error('Error approving verification:', error);
-      res.status(500).json({
+exports.approveVerification = asyncHandler(async (req, res) => {
+  try {
+    const requestId = req.params.requestId;
+
+    if (!mongoose.Types.ObjectId.isValid(requestId)) {
+      return res.status(400).json({
         success: false,
-        message: 'Error approving verification request',
-        error: error.message
+        message: 'Invalid request ID'
       });
     }
-  });
+
+    const verificationRequest = await VerificationRequest.findById(requestId);
+
+    if (!verificationRequest) {
+      return res.status(404).json({
+        success: false,
+        message: 'Verification request not found'
+      });
+    }
+
+    // Update verification request status using findByIdAndUpdate to avoid validation issues
+    const updatedRequest = await VerificationRequest.findByIdAndUpdate(
+      requestId,
+      { status: 'approved', updatedAt: Date.now() },
+      { new: true }
+    );
+
+    // Update user's verification status
+    const user = await User.findById(verificationRequest.user);
+    if (user) {
+      user.isVerified = true;
+      await user.save();
+
+      // Here you would typically send a notification
+      // Placeholder for notification logic
+      console.log(`User ${user._id} has been verified!`);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Verification request approved successfully',
+      data: updatedRequest
+    });
+  } catch (error) {
+    console.error('Error approving verification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error approving verification request',
+      error: error.message
+    });
+  }
+});
   
   /**
    * @desc    Reject a verification request
@@ -588,112 +590,235 @@ exports.getAllVerifications = asyncHandler(async (req, res) => {
    * @access  Admin only
    */
   exports.rejectVerification = asyncHandler(async (req, res) => {
-    try {
-      const { rejectionReason } = req.body;
-      const requestId = req.params.requestId;
-  
-      if (!mongoose.Types.ObjectId.isValid(requestId)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid request ID'
-        });
-      }
-  
-      if (!rejectionReason) {
-        return res.status(400).json({
-          success: false,
-          message: 'Rejection reason is required'
-        });
-      }
-  
-      const verificationRequest = await VerificationRequest.findById(requestId);
-  
-      if (!verificationRequest) {
-        return res.status(404).json({
-          success: false,
-          message: 'Verification request not found'
-        });
-      }
-  
-      // Update verification request
-      verificationRequest.status = 'rejected';
-      verificationRequest.rejectionReason = rejectionReason;
-      verificationRequest.updatedAt = Date.now();
-      await verificationRequest.save();
-  
-      res.status(200).json({
-        success: true,
-        message: 'Verification request rejected successfully',
-        data: verificationRequest
-      });
-    } catch (error) {
-      console.error('Error rejecting verification:', error);
-      res.status(500).json({
+  try {
+    const { rejectionReason } = req.body;
+    const requestId = req.params.requestId;
+
+    if (!mongoose.Types.ObjectId.isValid(requestId)) {
+      return res.status(400).json({
         success: false,
-        message: 'Error rejecting verification request',
-        error: error.message
+        message: 'Invalid request ID'
       });
     }
-  });
+
+    if (!rejectionReason) {
+      return res.status(400).json({
+        success: false,
+        message: 'Rejection reason is required'
+      });
+    }
+
+    const verificationRequest = await VerificationRequest.findById(requestId);
+
+    if (!verificationRequest) {
+      return res.status(404).json({
+        success: false,
+        message: 'Verification request not found'
+      });
+    }
+
+    // Update verification request using findByIdAndUpdate to avoid validation issues
+    const updatedRequest = await VerificationRequest.findByIdAndUpdate(
+      requestId,
+      { 
+        status: 'rejected', 
+        rejectionReason: rejectionReason,
+        updatedAt: Date.now() 
+      },
+      { new: true }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Verification request rejected successfully',
+      data: updatedRequest
+    });
+  } catch (error) {
+    console.error('Error rejecting verification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error rejecting verification request',
+      error: error.message
+    });
+  }
+});
   
   /**
    * @desc    Download verification documents
    * @route   GET /api/admin/verifications/:requestId/download
    * @access  Admin only
    */
-  exports.downloadVerificationData = asyncHandler(async (req, res) => {
-    try {
-      const requestId = req.params.requestId;
-  
-      if (!mongoose.Types.ObjectId.isValid(requestId)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid request ID'
-        });
-      }
-  
-      const verificationRequest = await VerificationRequest.findById(requestId)
-        .populate('user', 'fullName email lichessUsername')
-        .lean();
-  
-      if (!verificationRequest) {
-        return res.status(404).json({
-          success: false,
-          message: 'Verification request not found'
-        });
-      }
-  
-      // Create data object for download
-      const verificationData = {
-        requestId: verificationRequest._id,
-        user: verificationRequest.user,
-        fullName: verificationRequest.fullName,
-        address: verificationRequest.address,
-        idType: verificationRequest.idType,
-        idNumber: verificationRequest.idNumber,
-        status: verificationRequest.status,
-        createdAt: verificationRequest.createdAt,
-        updatedAt: verificationRequest.updatedAt,
-        idCardImageUrl: verificationRequest.idCardImage,
-        selfieImageUrl: verificationRequest.selfieImage
-      };
-  
-      // Set headers for file download
-      res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Content-Disposition', `attachment; filename=verification_${requestId}_data.json`);
-      
-      // Send the data as a downloadable file
-      res.status(200).json(verificationData);
-    } catch (error) {
-      console.error('Error downloading verification data:', error);
-      res.status(500).json({
+exports.downloadVerificationData = asyncHandler(async (req, res) => {
+  try {
+    const requestId = req.params.requestId;
+    const format = req.query.format?.toLowerCase() || 'pdf'; // Default to PDF if format not specified
+
+    if (!['pdf', 'csv'].includes(format)) {
+      return res.status(400).json({
         success: false,
-        message: 'Error downloading verification data',
-        error: error.message
+        message: 'Invalid format. Supported formats: pdf, csv'
       });
     }
-  });
-  
+
+    if (!mongoose.Types.ObjectId.isValid(requestId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid request ID'
+      });
+    }
+
+    const verificationRequest = await VerificationRequest.findById(requestId)
+      .populate('user', 'fullName email lichessUsername')
+      .lean();
+
+    if (!verificationRequest) {
+      return res.status(404).json({
+        success: false,
+        message: 'Verification request not found'
+      });
+    }
+
+    // Handle PDF format
+    if (format === 'pdf') {
+      // Create PDF document using PDFKit
+      const PDFDocument = require('pdfkit');
+      const doc = new PDFDocument();
+      
+      // Set response headers for PDF download
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename=verification_${requestId}.pdf`);
+      
+      // Pipe the PDF document to the response
+      doc.pipe(res);
+      
+      // Add content to the PDF
+      doc.fontSize(20).text('Verification Request Details', { align: 'center' });
+      doc.moveDown();
+      
+      // Add a horizontal line
+      doc.moveTo(50, doc.y)
+         .lineTo(550, doc.y)
+         .stroke();
+      doc.moveDown();
+      
+      // User information section
+      doc.fontSize(16).text('User Information');
+      doc.moveDown(0.5);
+      doc.fontSize(12).text(`Full Name: ${verificationRequest.fullName || verificationRequest.user.fullName || 'N/A'}`);
+      doc.moveDown(0.5);
+      doc.fontSize(12).text(`Email: ${verificationRequest.user.email || 'N/A'}`);
+      doc.moveDown(0.5);
+      doc.fontSize(12).text(`Lichess Username: ${verificationRequest.user.lichessUsername || 'N/A'}`);
+      doc.moveDown(0.5);
+      doc.fontSize(12).text(`Address: ${verificationRequest.address || 'N/A'}`);
+      doc.moveDown();
+      
+      // Request information section
+      doc.fontSize(16).text('Verification Details');
+      doc.moveDown(0.5);
+      doc.fontSize(12).text(`Status: ${verificationRequest.status || 'N/A'}`);
+      doc.moveDown(0.5);
+      doc.fontSize(12).text(`Created At: ${new Date(verificationRequest.createdAt).toLocaleString() || 'N/A'}`);
+      doc.moveDown(0.5);
+      doc.fontSize(12).text(`Updated At: ${new Date(verificationRequest.updatedAt).toLocaleString() || 'N/A'}`);
+      doc.moveDown();
+      
+      // ID information section
+      doc.fontSize(16).text('ID Information');
+      doc.moveDown(0.5);
+      
+      // Only include these fields if they exist in the data
+      if (verificationRequest.idType) {
+        doc.fontSize(12).text(`ID Type: ${verificationRequest.idType}`);
+        doc.moveDown(0.5);
+      }
+      
+      if (verificationRequest.idNumber) {
+        doc.fontSize(12).text(`ID Number: ${verificationRequest.idNumber}`);
+        doc.moveDown(0.5);
+      }
+      
+      // Image references section
+      doc.fontSize(16).text('Document References');
+      doc.moveDown(0.5);
+      doc.fontSize(12).text(`ID Card Image URL: ${verificationRequest.idCardImage || 'N/A'}`);
+      doc.moveDown(0.5);
+      doc.fontSize(12).text(`Selfie Image URL: ${verificationRequest.selfieImage || 'N/A'}`);
+      
+      // If there's a rejection reason, add it
+      if (verificationRequest.rejectionReason) {
+        doc.moveDown();
+        doc.fontSize(16).text('Rejection Information');
+        doc.moveDown(0.5);
+        doc.fontSize(12).text(`Reason: ${verificationRequest.rejectionReason}`);
+      }
+      
+      // Request ID for reference
+      doc.moveDown();
+      doc.fontSize(10).text(`Request ID: ${verificationRequest._id}`, { align: 'right' });
+      
+      // Finalize the PDF
+      doc.end();
+    } 
+    // Handle CSV format
+    else if (format === 'csv') {
+      // Create data object for CSV
+      const csvData = {
+        'Request ID': verificationRequest._id,
+        'Full Name': verificationRequest.fullName || verificationRequest.user.fullName || 'N/A',
+        'Email': verificationRequest.user.email || 'N/A',
+        'Lichess Username': verificationRequest.user.lichessUsername || 'N/A',
+        'Address': verificationRequest.address || 'N/A',
+        'Status': verificationRequest.status || 'N/A',
+        'Created At': new Date(verificationRequest.createdAt).toLocaleString() || 'N/A',
+        'Updated At': new Date(verificationRequest.updatedAt).toLocaleString() || 'N/A',
+        'ID Card Image URL': verificationRequest.idCardImage || 'N/A',
+        'Selfie Image URL': verificationRequest.selfieImage || 'N/A'
+      };
+      
+      // Add conditional fields
+      if (verificationRequest.idType) {
+        csvData['ID Type'] = verificationRequest.idType;
+      }
+      
+      if (verificationRequest.idNumber) {
+        csvData['ID Number'] = verificationRequest.idNumber;
+      }
+      
+      if (verificationRequest.rejectionReason) {
+        csvData['Rejection Reason'] = verificationRequest.rejectionReason;
+      }
+
+      // Create CSV content
+      const createCsvStringifier = require('csv-writer').createObjectCsvStringifier;
+      const csvStringifier = createCsvStringifier({
+        header: Object.keys(csvData).map(key => ({id: key, title: key}))
+      });
+      
+      const header = csvStringifier.getHeaderString();
+      const records = csvStringifier.stringifyRecords([csvData]);
+      const csvContent = header + records;
+      
+      // Set headers for CSV download
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename=verification_${requestId}.csv`);
+      
+      // Send the CSV content
+      res.send(csvContent);
+    }
+    
+  } catch (error) {
+    console.error('Error downloading verification data:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error downloading verification data',
+      error: error.message
+    });
+  }
+});
+
+
+
   /**
    * @desc    Get a single verification request details
    * @route   GET /api/admin/verifications/:requestId
@@ -1025,74 +1150,201 @@ exports.getAllTournaments = async (req, res) => {
    * @access  Admin only
    */
   exports.downloadTournaments = async (req, res) => {
-    try {
-      const status = req.query.status || 'all';
-      const startDate = req.query.startDate ? new Date(req.query.startDate) : null;
-      const endDate = req.query.endDate ? new Date(req.query.endDate) : null;
-      
-      // Build query
-      const query = {};
-      
-      if (status !== 'all') {
-        query.status = status;
-      }
-      
-      // Add date range if provided
-      if (startDate && endDate) {
-        query.startDate = {
-          $gte: startDate,
-          $lte: endDate
-        };
-      } else if (startDate) {
-        query.startDate = { $gte: startDate };
-      } else if (endDate) {
-        query.startDate = { $lte: endDate };
-      }
-  
-      // Get tournament data
-      const tournaments = await Tournament.find(query)
-        .populate('organizer', 'fullName email lichessUsername')
-        .sort({ startDate: -1 })
-        .lean();
-  
-      // Format data for export
-      const formattedTournaments = tournaments.map(t => ({
-        title: t.title,
-        category: t.category,
-        organizer: t.organizer ? {
-          fullName: t.organizer.fullName,
-          email: t.organizer.email,
-          lichessUsername: t.organizer.lichessUsername
-        } : 'N/A',
-        startDate: t.startDate,
-        startTime: t.startTime,
-        duration: t.duration,
-        status: t.status,
-        entryFee: t.entryFee,
-        participantsCount: t.participants ? t.participants.length : 0,
-        prizeType: t.prizeType,
-        tournamentLink: t.tournamentLink,
-        createdAt: t.createdAt
-      }));
-  
-      // Set headers for file download
-      res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Content-Disposition', `attachment; filename=tournaments_${status}_${Date.now()}.json`);
-      
-      // Send the data as a downloadable file
-      res.status(200).json({
-        totalRecords: formattedTournaments.length,
-        data: formattedTournaments
-      });
-    } catch (error) {
-      console.error('Error downloading tournament data:', error);
-      res.status(500).json({
+  try {
+    const format = req.query.format?.toLowerCase() || 'pdf'; // Default to PDF if format not specified
+    const status = req.query.status || 'all';
+    const startDate = req.query.startDate ? new Date(req.query.startDate) : null;
+    const endDate = req.query.endDate ? new Date(req.query.endDate) : null;
+    
+    if (!['pdf', 'csv'].includes(format)) {
+      return res.status(400).json({
         success: false,
-        message: 'Error downloading tournament data',
-        error: error.message
+        message: 'Invalid format. Supported formats: pdf, csv'
       });
     }
-  };
+    
+    // Build query
+    const query = {};
+    
+    if (status !== 'all') {
+      query.status = status;
+    }
+    
+    // Add date range if provided
+    if (startDate && endDate) {
+      query.startDate = {
+        $gte: startDate,
+        $lte: endDate
+      };
+    } else if (startDate) {
+      query.startDate = { $gte: startDate };
+    } else if (endDate) {
+      query.startDate = { $lte: endDate };
+    }
+
+    // Get tournament data
+    const tournaments = await Tournament.find(query)
+      .populate('organizer', 'fullName email lichessUsername')
+      .sort({ startDate: -1 })
+      .lean();
+
+    // Format data for export
+    const formattedTournaments = tournaments.map(t => ({
+      title: t.title || 'N/A',
+      category: t.category || 'N/A',
+      organizerName: t.organizer ? t.organizer.fullName : 'N/A',
+      organizerEmail: t.organizer ? t.organizer.email : 'N/A',
+      organizerLichess: t.organizer ? t.organizer.lichessUsername : 'N/A',
+      startDate: t.startDate ? new Date(t.startDate).toLocaleDateString() : 'N/A',
+      startTime: t.startTime || 'N/A',
+      duration: t.duration || 'N/A',
+      status: t.status || 'N/A',
+      entryFee: t.entryFee || 0,
+      participantsCount: t.participants ? t.participants.length : 0,
+      prizeType: t.prizeType || 'N/A',
+      tournamentLink: t.tournamentLink || 'N/A',
+      createdAt: t.createdAt ? new Date(t.createdAt).toLocaleDateString() : 'N/A'
+    }));
+
+    // Set filename based on filters
+    let filename = `tournaments_${status}`;
+    if (startDate) filename += `_from_${startDate.toISOString().split('T')[0]}`;
+    if (endDate) filename += `_to_${endDate.toISOString().split('T')[0]}`;
+
+    // Handle PDF format
+    if (format === 'pdf') {
+      try {
+        // Try to require PDFKit
+        const PDFDocument = require('pdfkit');
+        const doc = new PDFDocument({ margin: 50 });
+        
+        // Set response headers for PDF download
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=${filename}.pdf`);
+        
+        // Pipe the PDF document to the response
+        doc.pipe(res);
+        
+        // Add content to the PDF
+        doc.fontSize(20).text('Tournaments Report', { align: 'center' });
+        doc.moveDown();
+        
+        // Add filters information
+        doc.fontSize(12).text(`Status: ${status}`);
+        if (startDate) doc.text(`Start Date: ${startDate.toLocaleDateString()}`);
+        if (endDate) doc.text(`End Date: ${endDate.toLocaleDateString()}`);
+        doc.text(`Total Records: ${formattedTournaments.length}`);
+        doc.moveDown();
+        
+        // Add a horizontal line
+        doc.moveTo(50, doc.y)
+           .lineTo(550, doc.y)
+           .stroke();
+        doc.moveDown();
+
+        // If no tournaments found
+        if (formattedTournaments.length === 0) {
+          doc.fontSize(14).text('No tournaments found matching the criteria.', { align: 'center' });
+        } else {
+          // For each tournament, add a section
+          formattedTournaments.forEach((tournament, index) => {
+            doc.fontSize(16).text(`${index + 1}. ${tournament.title}`);
+            doc.moveDown(0.5);
+            doc.fontSize(12).text(`Category: ${tournament.category}`);
+            doc.fontSize(12).text(`Organizer: ${tournament.organizerName} (${tournament.organizerEmail})`);
+            doc.fontSize(12).text(`Lichess Username: ${tournament.organizerLichess}`);
+            doc.fontSize(12).text(`Start Date: ${tournament.startDate}`);
+            doc.fontSize(12).text(`Start Time: ${tournament.startTime}`);
+            doc.fontSize(12).text(`Duration: ${tournament.duration}`);
+            doc.fontSize(12).text(`Status: ${tournament.status}`);
+            doc.fontSize(12).text(`Entry Fee: ${tournament.entryFee}`);
+            doc.fontSize(12).text(`Participants Count: ${tournament.participantsCount}`);
+            doc.fontSize(12).text(`Prize Type: ${tournament.prizeType}`);
+            doc.fontSize(12).text(`Tournament Link: ${tournament.tournamentLink}`);
+            doc.fontSize(12).text(`Created At: ${tournament.createdAt}`);
+            
+            // Add space between tournaments
+            if (index < formattedTournaments.length - 1) {
+              doc.moveDown();
+              doc.moveTo(50, doc.y)
+                 .lineTo(550, doc.y)
+                 .stroke();
+              doc.moveDown();
+            }
+          });
+        }
+        
+        // Finalize the PDF
+        doc.end();
+      } catch (error) {
+        if (error.code === 'MODULE_NOT_FOUND') {
+          return res.status(500).json({
+            success: false,
+            message: 'PDF generation module not installed',
+            error: 'Please run: npm install pdfkit'
+          });
+        }
+        throw error; // Re-throw if it's a different error
+      }
+    } 
+    // Handle CSV format
+    else if (format === 'csv') {
+      try {
+        // Try to require csv-writer
+        const createCsvStringifier = require('csv-writer').createObjectCsvStringifier;
+        
+        // Define headers for CSV
+        const headers = [
+          { id: 'title', title: 'Title' },
+          { id: 'category', title: 'Category' },
+          { id: 'organizerName', title: 'Organizer Name' },
+          { id: 'organizerEmail', title: 'Organizer Email' },
+          { id: 'organizerLichess', title: 'Lichess Username' },
+          { id: 'startDate', title: 'Start Date' },
+          { id: 'startTime', title: 'Start Time' },
+          { id: 'duration', title: 'Duration' },
+          { id: 'status', title: 'Status' },
+          { id: 'entryFee', title: 'Entry Fee' },
+          { id: 'participantsCount', title: 'Participants Count' },
+          { id: 'prizeType', title: 'Prize Type' },
+          { id: 'tournamentLink', title: 'Tournament Link' },
+          { id: 'createdAt', title: 'Created At' }
+        ];
+        
+        const csvStringifier = createCsvStringifier({
+          header: headers
+        });
+        
+        const headerString = csvStringifier.getHeaderString();
+        const recordsString = csvStringifier.stringifyRecords(formattedTournaments);
+        const csvContent = headerString + recordsString;
+        
+        // Set headers for CSV download
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename=${filename}.csv`);
+        
+        // Send the CSV content
+        res.send(csvContent);
+      } catch (error) {
+        if (error.code === 'MODULE_NOT_FOUND') {
+          return res.status(500).json({
+            success: false,
+            message: 'CSV generation module not installed',
+            error: 'Please run: npm install csv-writer'
+          });
+        }
+        throw error; // Re-throw if it's a different error
+      }
+    }
+  } catch (error) {
+    console.error('Error downloading tournament data:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error downloading tournament data',
+      error: error.message
+    });
+  }
+};
 
   /**
  * @desc    Update admin profile
@@ -1823,77 +2075,286 @@ exports.getAllPlayers = async (req, res) => {
    * @access  Private/Admin
    */
   exports.downloadPlayerData = async (req, res) => {
-    try {
-      const userId = req.params.userId;
-  
-      if (!mongoose.Types.ObjectId.isValid(userId)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid user ID'
-        });
-      }
-  
-      const user = await User.findById(userId).lean();
-  
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: 'User not found'
-        });
-      }
-  
-      // Get all user-related data
-      const createdTournaments = await Tournament.find({
-        organizer: userId
-      }).select('title startDate status participants category').lean();
-  
-      const registeredTournaments = await Tournament.find({
-        participants: userId
-      }).select('title startDate status category').lean();
-  
-      const transactions = await Transaction.find({
-        user: userId
-      }).sort({ createdAt: -1 }).lean();
-  
-      const verificationHistory = await VerificationRequest.find({
-        user: userId
-      }).sort({ updatedAt: -1 }).lean();
-  
-      // Create data object for download
-      const userData = {
-        personalInfo: {
-          fullName: user.fullName,
-          email: user.email,
-          lichessUsername: user.lichessUsername,
-          phoneNumber: user.phoneNumber,
-          isVerified: user.isVerified,
-          walletBalance: user.walletBalance,
-          createdAt: user.createdAt,
-          bankDetails: user.bankDetails || {}
-        },
-        tournaments: {
-          created: createdTournaments,
-          registered: registeredTournaments
-        },
-        transactions: transactions,
-        verificationHistory: verificationHistory
-      };
-  
-      // Set headers for file download
-      res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Content-Disposition', `attachment; filename=user_${userId}_data.json`);
-      
-      // Send the data as a downloadable file
-      res.status(200).json(userData);
-    } catch (error) {
-      console.error('Error downloading player data:', error);
-      res.status(500).json({
+  try {
+    const userId = req.params.userId;
+    const format = req.query.format?.toLowerCase() || 'pdf'; // Default to PDF if format not specified
+
+    if (!['pdf', 'csv'].includes(format)) {
+      return res.status(400).json({
         success: false,
-        message: 'Error downloading player data',
-        error: error.message
+        message: 'Invalid format. Supported formats: pdf, csv'
       });
     }
-  };
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid user ID'
+      });
+    }
+
+    const user = await User.findById(userId).lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Get all user-related data
+    const createdTournaments = await Tournament.find({
+      organizer: userId
+    }).select('title startDate status participants category').lean();
+
+    const registeredTournaments = await Tournament.find({
+      participants: userId
+    }).select('title startDate status category').lean();
+
+    const transactions = await Transaction.find({
+      user: userId
+    }).sort({ createdAt: -1 }).lean();
+
+    const verificationHistory = await VerificationRequest.find({
+      user: userId
+    }).sort({ updatedAt: -1 }).lean();
+
+    // Handle PDF format
+    if (format === 'pdf') {
+      try {
+        // Try to require PDFKit
+        const PDFDocument = require('pdfkit');
+        const doc = new PDFDocument({ margin: 50 });
+        
+        // Set response headers for PDF download
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=player_${userId}.pdf`);
+        
+        // Pipe the PDF document to the response
+        doc.pipe(res);
+        
+        // Add content to the PDF
+        doc.fontSize(20).text('Player Data Report', { align: 'center' });
+        doc.moveDown();
+        
+        // Add user information section
+        doc.fontSize(16).text('Personal Information', { underline: true });
+        doc.moveDown(0.5);
+        doc.fontSize(12).text(`Full Name: ${user.fullName || 'N/A'}`);
+        doc.fontSize(12).text(`Email: ${user.email || 'N/A'}`);
+        doc.fontSize(12).text(`Lichess Username: ${user.lichessUsername || 'N/A'}`);
+        doc.fontSize(12).text(`Phone Number: ${user.phoneNumber || 'N/A'}`);
+        doc.fontSize(12).text(`Verification Status: ${user.isVerified ? 'Verified' : 'Not Verified'}`);
+        doc.fontSize(12).text(`Wallet Balance: ${user.walletBalance || 0}`);
+        doc.fontSize(12).text(`Account Created: ${new Date(user.createdAt).toLocaleDateString() || 'N/A'}`);
+        
+        // Add bank details if available
+        if (user.bankDetails && Object.keys(user.bankDetails).length > 0) {
+          doc.moveDown();
+          doc.fontSize(14).text('Bank Details');
+          doc.fontSize(12).text(`Bank Name: ${user.bankDetails.bankName || 'N/A'}`);
+          doc.fontSize(12).text(`Account Number: ${user.bankDetails.accountNumber || 'N/A'}`);
+          doc.fontSize(12).text(`Account Name: ${user.bankDetails.accountName || 'N/A'}`);
+        }
+        
+        // Add created tournaments section
+        doc.moveDown();
+        doc.fontSize(16).text('Created Tournaments', { underline: true });
+        doc.moveDown(0.5);
+        
+        if (createdTournaments.length === 0) {
+          doc.fontSize(12).text('No tournaments created by this user.');
+        } else {
+          createdTournaments.forEach((tournament, index) => {
+            doc.fontSize(12).text(`${index + 1}. ${tournament.title || 'N/A'}`);
+            doc.fontSize(10).text(`   Category: ${tournament.category || 'N/A'}`);
+            doc.fontSize(10).text(`   Start Date: ${tournament.startDate ? new Date(tournament.startDate).toLocaleDateString() : 'N/A'}`);
+            doc.fontSize(10).text(`   Status: ${tournament.status || 'N/A'}`);
+            doc.fontSize(10).text(`   Participants: ${tournament.participants ? tournament.participants.length : 0}`);
+            doc.moveDown(0.5);
+          });
+        }
+        
+        // Add registered tournaments section
+        doc.moveDown();
+        doc.fontSize(16).text('Registered Tournaments', { underline: true });
+        doc.moveDown(0.5);
+        
+        if (registeredTournaments.length === 0) {
+          doc.fontSize(12).text('No tournaments registered by this user.');
+        } else {
+          registeredTournaments.forEach((tournament, index) => {
+            doc.fontSize(12).text(`${index + 1}. ${tournament.title || 'N/A'}`);
+            doc.fontSize(10).text(`   Category: ${tournament.category || 'N/A'}`);
+            doc.fontSize(10).text(`   Start Date: ${tournament.startDate ? new Date(tournament.startDate).toLocaleDateString() : 'N/A'}`);
+            doc.fontSize(10).text(`   Status: ${tournament.status || 'N/A'}`);
+            doc.moveDown(0.5);
+          });
+        }
+        
+        // Add transactions section
+        doc.moveDown();
+        doc.fontSize(16).text('Transaction History', { underline: true });
+        doc.moveDown(0.5);
+        
+        if (transactions.length === 0) {
+          doc.fontSize(12).text('No transaction history found for this user.');
+        } else {
+          transactions.forEach((transaction, index) => {
+            doc.fontSize(12).text(`${index + 1}. ${transaction.type.charAt(0).toUpperCase() + transaction.type.slice(1) || 'N/A'}`);
+            doc.fontSize(10).text(`   Amount: ${transaction.amount || 0}`);
+            doc.fontSize(10).text(`   Status: ${transaction.status || 'N/A'}`);
+            doc.fontSize(10).text(`   Date: ${transaction.createdAt ? new Date(transaction.createdAt).toLocaleDateString() : 'N/A'}`);
+            doc.fontSize(10).text(`   Reference: ${transaction.reference || 'N/A'}`);
+            if (transaction.notes) doc.fontSize(10).text(`   Notes: ${transaction.notes}`);
+            doc.moveDown(0.5);
+          });
+        }
+        
+        // Add verification history section
+        doc.moveDown();
+        doc.fontSize(16).text('Verification History', { underline: true });
+        doc.moveDown(0.5);
+        
+        if (verificationHistory.length === 0) {
+          doc.fontSize(12).text('No verification history found for this user.');
+        } else {
+          verificationHistory.forEach((verification, index) => {
+            doc.fontSize(12).text(`${index + 1}. Request ${verification._id}`);
+            doc.fontSize(10).text(`   Status: ${verification.status || 'N/A'}`);
+            doc.fontSize(10).text(`   Created: ${verification.createdAt ? new Date(verification.createdAt).toLocaleDateString() : 'N/A'}`);
+            doc.fontSize(10).text(`   Updated: ${verification.updatedAt ? new Date(verification.updatedAt).toLocaleDateString() : 'N/A'}`);
+            if (verification.rejectionReason) doc.fontSize(10).text(`   Rejection Reason: ${verification.rejectionReason}`);
+            doc.moveDown(0.5);
+          });
+        }
+        
+        // Finalize the PDF
+        doc.end();
+      } catch (error) {
+        if (error.code === 'MODULE_NOT_FOUND') {
+          return res.status(500).json({
+            success: false,
+            message: 'PDF generation module not installed',
+            error: 'Please run: npm install pdfkit'
+          });
+        }
+        throw error; // Re-throw if it's a different error
+      }
+    } 
+    // Handle CSV format
+    else if (format === 'csv') {
+      try {
+        // Try to require csv-writer
+        const createCsvStringifier = require('csv-writer').createObjectCsvStringifier;
+        
+        // Format data for CSV
+        // For personal info
+        const personalInfo = {
+          'User ID': userId,
+          'Full Name': user.fullName || 'N/A',
+          'Email': user.email || 'N/A',
+          'Lichess Username': user.lichessUsername || 'N/A',
+          'Phone Number': user.phoneNumber || 'N/A',
+          'Is Verified': user.isVerified ? 'Yes' : 'No',
+          'Wallet Balance': user.walletBalance || 0,
+          'Created At': user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A',
+          'Bank Name': user.bankDetails?.bankName || 'N/A',
+          'Account Number': user.bankDetails?.accountNumber || 'N/A',
+          'Account Name': user.bankDetails?.accountName || 'N/A'
+        };
+        
+        // For created tournaments
+        const createdTournamentsFormatted = createdTournaments.map((t, index) => ({
+          'Data Type': 'Created Tournament',
+          'Title': t.title || 'N/A',
+          'Category': t.category || 'N/A',
+          'Start Date': t.startDate ? new Date(t.startDate).toLocaleDateString() : 'N/A',
+          'Status': t.status || 'N/A',
+          'Participants': t.participants ? t.participants.length : 0
+        }));
+        
+        // For registered tournaments
+        const registeredTournamentsFormatted = registeredTournaments.map((t, index) => ({
+          'Data Type': 'Registered Tournament',
+          'Title': t.title || 'N/A',
+          'Category': t.category || 'N/A',
+          'Start Date': t.startDate ? new Date(t.startDate).toLocaleDateString() : 'N/A',
+          'Status': t.status || 'N/A'
+        }));
+        
+        // For transactions
+        const transactionsFormatted = transactions.map((t, index) => ({
+          'Data Type': 'Transaction',
+          'Type': t.type || 'N/A',
+          'Amount': t.amount || 0,
+          'Status': t.status || 'N/A',
+          'Created At': t.createdAt ? new Date(t.createdAt).toLocaleDateString() : 'N/A',
+          'Reference': t.reference || 'N/A',
+          'Notes': t.notes || 'N/A'
+        }));
+        
+        // For verification history
+        const verificationHistoryFormatted = verificationHistory.map((v, index) => ({
+          'Data Type': 'Verification Request',
+          'Request ID': v._id,
+          'Status': v.status || 'N/A',
+          'Created At': v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'N/A',
+          'Updated At': v.updatedAt ? new Date(v.updatedAt).toLocaleDateString() : 'N/A',
+          'Rejection Reason': v.rejectionReason || 'N/A'
+        }));
+        
+        // Combine all data for CSV export
+        const csvData = [
+          { 'Data Type': 'Personal Information', ...personalInfo },
+          ...createdTournamentsFormatted,
+          ...registeredTournamentsFormatted,
+          ...transactionsFormatted,
+          ...verificationHistoryFormatted
+        ];
+        
+        // Create CSV headers from all possible keys
+        const allKeys = new Set();
+        csvData.forEach(item => {
+          Object.keys(item).forEach(key => allKeys.add(key));
+        });
+        
+        const headers = Array.from(allKeys).map(key => ({ id: key, title: key }));
+        
+        const csvStringifier = createCsvStringifier({
+          header: headers
+        });
+        
+        const headerString = csvStringifier.getHeaderString();
+        const recordsString = csvStringifier.stringifyRecords(csvData);
+        const csvContent = headerString + recordsString;
+        
+        // Set headers for CSV download
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename=player_${userId}.csv`);
+        
+        // Send the CSV content
+        res.send(csvContent);
+      } catch (error) {
+        if (error.code === 'MODULE_NOT_FOUND') {
+          return res.status(500).json({
+            success: false,
+            message: 'CSV generation module not installed',
+            error: 'Please run: npm install csv-writer'
+          });
+        }
+        throw error; // Re-throw if it's a different error
+      }
+    }
+  } catch (error) {
+    console.error('Error downloading player data:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error downloading player data',
+      error: error.message
+    });
+  }
+};
   
 
   /**
@@ -2880,105 +3341,231 @@ exports.createActivityLog = async (req, res) => {
    * @access  Private/Admin
    */
   exports.downloadWithdrawals = async (req, res) => {
-    try {
-      const status = req.query.status; // 'pending', 'completed', 'declined', or undefined for all
-      const startDate = req.query.startDate ? new Date(req.query.startDate) : null;
-      const endDate = req.query.endDate ? new Date(req.query.endDate) : null;
-      
-      // Build query
-      const query = { type: 'withdrawal' };
-      
-      // Add status filter if provided
-      if (status && ['pending', 'completed', 'declined'].includes(status)) {
-        query.status = status;
-      }
-      
-      // Add date range filter if provided
-      if (startDate || endDate) {
-        query.createdAt = {};
-        if (startDate) {
-          query.createdAt.$gte = startDate;
-        }
-        if (endDate) {
-          // Set end date to the end of the day
-          endDate.setHours(23, 59, 59, 999);
-          query.createdAt.$lte = endDate;
-        }
-      }
-      
-      // Get withdrawals with user details
-      const withdrawals = await Transaction.aggregate([
-        { $match: query },
-        { $sort: { createdAt: -1 } },
-        { 
-          $lookup: {
-            from: 'users',
-            localField: 'user',
-            foreignField: '_id',
-            as: 'userDetails'
-          }
-        },
-        { $unwind: '$userDetails' },
-        {
-          $project: {
-            amount: 1,
-            status: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            notes: 1,
-            rejectionReason: 1,
-            reference: 1,
-            bankDetails: 1,
-            'user.fullName': '$userDetails.fullName',
-            'user.email': '$userDetails.email',
-            'user.lichessUsername': '$userDetails.lichessUsername',
-            'user.walletBalance': '$userDetails.walletBalance'
-          }
-        }
-      ]);
-  
-      // Format data for download
-      const formattedData = withdrawals.map(w => ({
-        fullName: w.user.fullName,
-        email: w.user.email,
-        lichessUsername: w.user.lichessUsername,
-        amount: w.amount,
-        status: w.status,
-        walletBalance: w.user.walletBalance,
-        reference: w.reference || 'N/A',
-        bankName: w.bankDetails?.bankName || 'N/A',
-        accountNumber: w.bankDetails?.accountNumber || 'N/A',
-        accountName: w.bankDetails?.accountName || 'N/A',
-        createdAt: new Date(w.createdAt).toLocaleString(),
-        updatedAt: new Date(w.updatedAt).toLocaleString(),
-        notes: w.notes || 'N/A',
-        rejectionReason: w.rejectionReason || 'N/A'
-      }));
-  
-      // Set filename based on filters
-      let filename = 'withdrawals';
-      if (status) filename += `_${status}`;
-      if (startDate && endDate) {
-        filename += `_${startDate.toISOString().split('T')[0]}_to_${endDate.toISOString().split('T')[0]}`;
-      } else if (startDate) {
-        filename += `_from_${startDate.toISOString().split('T')[0]}`;
-      } else if (endDate) {
-        filename += `_until_${endDate.toISOString().split('T')[0]}`;
-      }
-      filename += '.json';
-  
-      // Set headers for file download
-      res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
-      
-      // Send the data as a downloadable file
-      res.status(200).json(formattedData);
-    } catch (error) {
-      console.error('Error downloading withdrawals data:', error);
-      res.status(500).json({
+  try {
+    const format = req.query.format?.toLowerCase() || 'pdf'; // Default to PDF if format not specified
+    const status = req.query.status; // 'pending', 'completed', 'declined', or undefined for all
+    const startDate = req.query.startDate ? new Date(req.query.startDate) : null;
+    const endDate = req.query.endDate ? new Date(req.query.endDate) : null;
+    
+    if (!['pdf', 'csv'].includes(format)) {
+      return res.status(400).json({
         success: false,
-        message: 'Error downloading withdrawals data',
-        error: error.message
+        message: 'Invalid format. Supported formats: pdf, csv'
       });
     }
-  };
+    
+    // Build query
+    const query = { type: 'withdrawal' };
+    
+    // Add status filter if provided
+    if (status && ['pending', 'completed', 'declined'].includes(status)) {
+      query.status = status;
+    }
+    
+    // Add date range filter if provided
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) {
+        query.createdAt.$gte = startDate;
+      }
+      if (endDate) {
+        // Set end date to the end of the day
+        endDate.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = endDate;
+      }
+    }
+    
+    // Get withdrawals with user details
+    const withdrawals = await Transaction.aggregate([
+      { $match: query },
+      { $sort: { createdAt: -1 } },
+      { 
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'userDetails'
+        }
+      },
+      { $unwind: '$userDetails' },
+      {
+        $project: {
+          amount: 1,
+          status: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          notes: 1,
+          rejectionReason: 1,
+          reference: 1,
+          bankDetails: 1,
+          'user.fullName': '$userDetails.fullName',
+          'user.email': '$userDetails.email',
+          'user.lichessUsername': '$userDetails.lichessUsername',
+          'user.walletBalance': '$userDetails.walletBalance'
+        }
+      }
+    ]);
+
+    // Format data for export
+    const formattedData = withdrawals.map(w => ({
+      fullName: w.user.fullName || 'N/A',
+      email: w.user.email || 'N/A',
+      lichessUsername: w.user.lichessUsername || 'N/A',
+      amount: w.amount || 0,
+      status: w.status || 'N/A',
+      walletBalance: w.user.walletBalance || 0,
+      reference: w.reference || 'N/A',
+      bankName: w.bankDetails?.bankName || 'N/A',
+      accountNumber: w.bankDetails?.accountNumber || 'N/A',
+      accountName: w.bankDetails?.accountName || 'N/A',
+      createdAt: w.createdAt ? new Date(w.createdAt).toLocaleString() : 'N/A',
+      updatedAt: w.updatedAt ? new Date(w.updatedAt).toLocaleString() : 'N/A',
+      notes: w.notes || 'N/A',
+      rejectionReason: w.rejectionReason || 'N/A'
+    }));
+
+    // Set filename based on filters
+    let filename = 'withdrawals';
+    if (status) filename += `_${status}`;
+    if (startDate && endDate) {
+      filename += `_${startDate.toISOString().split('T')[0]}_to_${endDate.toISOString().split('T')[0]}`;
+    } else if (startDate) {
+      filename += `_from_${startDate.toISOString().split('T')[0]}`;
+    } else if (endDate) {
+      filename += `_until_${endDate.toISOString().split('T')[0]}`;
+    }
+
+    // Handle PDF format
+    if (format === 'pdf') {
+      try {
+        // Try to require PDFKit
+        const PDFDocument = require('pdfkit');
+        const doc = new PDFDocument({ margin: 50 });
+        
+        // Set response headers for PDF download
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=${filename}.pdf`);
+        
+        // Pipe the PDF document to the response
+        doc.pipe(res);
+        
+        // Add content to the PDF
+        doc.fontSize(20).text('Withdrawals Report', { align: 'center' });
+        doc.moveDown();
+        
+        // Add filters information
+        if (status) doc.fontSize(12).text(`Status: ${status}`);
+        if (startDate) doc.fontSize(12).text(`Start Date: ${startDate.toLocaleDateString()}`);
+        if (endDate) doc.fontSize(12).text(`End Date: ${endDate.toLocaleDateString()}`);
+        doc.fontSize(12).text(`Total Records: ${formattedData.length}`);
+        doc.moveDown();
+        
+        // Add a horizontal line
+        doc.moveTo(50, doc.y)
+           .lineTo(550, doc.y)
+           .stroke();
+        doc.moveDown();
+
+        // If no withdrawals found
+        if (formattedData.length === 0) {
+          doc.fontSize(14).text('No withdrawals found matching the criteria.', { align: 'center' });
+        } else {
+          // For each withdrawal, add a section
+          formattedData.forEach((withdrawal, index) => {
+            doc.fontSize(16).text(`${index + 1}. Withdrawal - ${withdrawal.reference}`);
+            doc.moveDown(0.5);
+            doc.fontSize(12).text(`User: ${withdrawal.fullName} (${withdrawal.email})`);
+            doc.fontSize(12).text(`Lichess Username: ${withdrawal.lichessUsername}`);
+            doc.fontSize(12).text(`Amount: ${withdrawal.amount}`);
+            doc.fontSize(12).text(`Status: ${withdrawal.status}`);
+            doc.fontSize(12).text(`Wallet Balance: ${withdrawal.walletBalance}`);
+            doc.fontSize(12).text(`Bank Details: ${withdrawal.bankName}, ${withdrawal.accountNumber}, ${withdrawal.accountName}`);
+            doc.fontSize(12).text(`Created At: ${withdrawal.createdAt}`);
+            doc.fontSize(12).text(`Updated At: ${withdrawal.updatedAt}`);
+            
+            if (withdrawal.notes) doc.fontSize(12).text(`Notes: ${withdrawal.notes}`);
+            if (withdrawal.rejectionReason) doc.fontSize(12).text(`Rejection Reason: ${withdrawal.rejectionReason}`);
+            
+            // Add space between withdrawals
+            if (index < formattedData.length - 1) {
+              doc.moveDown();
+              doc.moveTo(50, doc.y)
+                 .lineTo(550, doc.y)
+                 .stroke();
+              doc.moveDown();
+            }
+          });
+        }
+        
+        // Finalize the PDF
+        doc.end();
+      } catch (error) {
+        if (error.code === 'MODULE_NOT_FOUND') {
+          return res.status(500).json({
+            success: false,
+            message: 'PDF generation module not installed',
+            error: 'Please run: npm install pdfkit'
+          });
+        }
+        throw error; // Re-throw if it's a different error
+      }
+    } 
+    // Handle CSV format
+    else if (format === 'csv') {
+      try {
+        // Try to require csv-writer
+        const createCsvStringifier = require('csv-writer').createObjectCsvStringifier;
+        
+        // Define headers for CSV
+        const headers = [
+          { id: 'fullName', title: 'Full Name' },
+          { id: 'email', title: 'Email' },
+          { id: 'lichessUsername', title: 'Lichess Username' },
+          { id: 'amount', title: 'Amount' },
+          { id: 'status', title: 'Status' },
+          { id: 'walletBalance', title: 'Wallet Balance' },
+          { id: 'reference', title: 'Reference' },
+          { id: 'bankName', title: 'Bank Name' },
+          { id: 'accountNumber', title: 'Account Number' },
+          { id: 'accountName', title: 'Account Name' },
+          { id: 'createdAt', title: 'Created At' },
+          { id: 'updatedAt', title: 'Updated At' },
+          { id: 'notes', title: 'Notes' },
+          { id: 'rejectionReason', title: 'Rejection Reason' }
+        ];
+        
+        const csvStringifier = createCsvStringifier({
+          header: headers
+        });
+        
+        // Create CSV content
+        const headerString = csvStringifier.getHeaderString();
+        const recordsString = csvStringifier.stringifyRecords(formattedData);
+        const csvContent = headerString + recordsString;
+        
+        // Set response headers for CSV download
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename=${filename}.csv`);
+        
+        // Send the CSV data
+        res.send(csvContent);
+      } catch (error) {
+        if (error.code === 'MODULE_NOT_FOUND') {
+          return res.status(500).json({
+            success: false,
+            message: 'CSV generation module not installed',
+            error: 'Please run: npm install csv-writer'
+          });
+        }
+        throw error; // Re-throw if it's a different error
+      }
+    }
+  } catch (error) {
+    console.error('Error in downloadWithdrawals:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download withdrawals',
+      error: error.message
+    });
+  }
+};
