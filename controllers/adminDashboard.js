@@ -1895,100 +1895,167 @@ exports.updateProfile = async (req, res) => {
  * @access  Private/Admin
  */
 exports.getAllPlayers = async (req, res) => {
-    try {
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 10;
-      const skip = (page - 1) * limit;
-      const status = req.query.status; // 'verified', 'unverified', 'declined'
-      const search = req.query.search || '';
-  
-      // Build match criteria
-      const matchCriteria = { role: 'user' };
-      
-      if (status === 'verified') {
-        matchCriteria.isVerified = true;
-      } else if (status === 'unverified') {
-        matchCriteria.isVerified = false;
-      } else if (status === 'declined') {
-        // For declined, we need to check verification requests
-        const declinedUserIds = await VerificationRequest.find({ status: 'rejected' })
-          .distinct('user');
-        matchCriteria._id = { $in: declinedUserIds };
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+    const filter = req.query.filter || 'all'; // 'all', 'verified', 'unverified', 'declined', 'registered'
+    const search = req.query.search || '';
+
+    // Build match criteria
+    const matchCriteria = { role: 'user' };
+    
+    // Apply filter
+    if (filter === 'verified') {
+      matchCriteria.isVerified = true;
+    } else if (filter === 'unverified') {
+      matchCriteria.isVerified = false;
+      // Exclude declined users (those who have rejected verification requests)
+      const declinedUserIds = await VerificationRequest.find({ status: 'rejected' })
+        .distinct('user');
+      if (declinedUserIds.length > 0) {
+        matchCriteria._id = { $nin: declinedUserIds };
       }
-      
-      // Add search functionality
-      if (search) {
-        matchCriteria.$or = [
-          { fullName: { $regex: search, $options: 'i' } },
-          { email: { $regex: search, $options: 'i' } },
-          { lichessUsername: { $regex: search, $options: 'i' } }
-        ];
-      }
-  
-      // Count total documents for pagination
-      const totalDocs = await User.countDocuments(matchCriteria);
-  
-      // Get players with pagination
-      const players = await User.aggregate([
-        {
-          $match: matchCriteria
-        },
-        {
-          $project: {
-            fullName: 1,
-            email: 1,
-            profilePic: 1,
-            lichessUsername: 1,
-            isVerified: 1,
-            createdAt: 1,
-            registeredTournamentsCount: { $size: { $ifNull: ['$registeredTournaments', []] } },
-            createdTournamentsCount: { $size: { $ifNull: ['$createdTournaments', []] } },
-            walletBalance: 1,
-            phoneNumber: 1
-          }
-        },
-        {
-          $sort: { createdAt: -1 }
-        },
-        {
-          $skip: skip
-        },
-        {
-          $limit: limit
-        }
-      ]);
-  
-      // Get counts for each status
-      const verifiedCount = await User.countDocuments({ role: 'user', isVerified: true });
-      const unverifiedCount = await User.countDocuments({ role: 'user', isVerified: false });
-      const declinedCount = await VerificationRequest.countDocuments({ status: 'rejected' });
-  
-      res.status(200).json({
-        success: true,
-        pagination: {
-          total: totalDocs,
-          page,
-          limit,
-          pages: Math.ceil(totalDocs / limit)
-        },
-        counts: {
-          verified: verifiedCount,
-          unverified: unverifiedCount,
-          declined: declinedCount,
-          total: totalDocs
-        },
-        data: players
-      });
-    } catch (error) {
-      console.error('Error fetching players:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Error fetching players',
-        error: error.message
-      });
+    } else if (filter === 'declined') {
+      // For declined, get users who have rejected verification requests
+      const declinedUserIds = await VerificationRequest.find({ status: 'rejected' })
+        .distinct('user');
+      matchCriteria._id = { $in: declinedUserIds };
+    } else if (filter === 'registered') {
+      // For registered, find users who have registered for at least one tournament
+      matchCriteria.registeredTournaments = { $exists: true, $ne: [] };
     }
-  };
-  
+    // For 'all', no additional criteria needed
+    
+    // Add search functionality
+    if (search) {
+      matchCriteria.$or = [
+        { fullName: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { lichessUsername: { $regex: search, $options: 'i' } },
+        { phoneNumber: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    // Count total documents for pagination
+    const totalDocs = await User.countDocuments(matchCriteria);
+
+    // Get players with pagination
+    const playersData = await User.aggregate([
+      {
+        $match: matchCriteria
+      },
+      {
+        $lookup: {
+          from: 'verificationrequests',
+          localField: '_id',
+          foreignField: 'user',
+          as: 'verificationRequests'
+        }
+      },
+      {
+        $project: {
+          fullName: 1,
+          email: 1,
+          profilePic: 1,
+          lichessUsername: 1,
+          isVerified: 1,
+          createdAt: 1,
+          registeredTournamentsCount: { $size: { $ifNull: ['$registeredTournaments', []] } },
+          createdTournamentsCount: { $size: { $ifNull: ['$createdTournaments', []] } },
+          walletBalance: 1,
+          phoneNumber: 1,
+          verificationRequests: 1
+        }
+      },
+      {
+        $sort: { createdAt: -1 }
+      },
+      {
+        $skip: skip
+      },
+      {
+        $limit: limit
+      }
+    ]);
+    
+    // Process players to add status field
+    const players = playersData.map(player => {
+      let status = 'unverified';
+      
+      if (player.isVerified) {
+        status = 'verified';
+      } else {
+        // Check if user has any rejected verification requests
+        const hasRejectedRequest = player.verificationRequests && 
+          player.verificationRequests.some(req => req.status === 'rejected');
+        
+        if (hasRejectedRequest) {
+          status = 'declined';
+        }
+      }
+      
+      // Remove verificationRequests from response
+      const { verificationRequests, ...playerData } = player;
+      
+      return {
+        ...playerData,
+        status
+      };
+    });
+
+    // Get counts for different filter types
+    // Count of verified users
+    const verifiedCount = await User.countDocuments({ role: 'user', isVerified: true });
+    
+    // Count of users with rejected verification requests (declined)
+    const declinedUserIds = await VerificationRequest.find({ status: 'rejected' }).distinct('user');
+    const declinedCount = declinedUserIds.length;
+    
+    // Count of unverified users (exclude declined)
+    const unverifiedCount = await User.countDocuments({ 
+      role: 'user', 
+      isVerified: false,
+      _id: { $nin: declinedUserIds }
+    });
+    
+    // Count of registered users (in tournaments)
+    const registeredCount = await User.countDocuments({ 
+      role: 'user', 
+      registeredTournaments: { $exists: true, $ne: [] } 
+    });
+    
+    // Total user count
+    const totalCount = await User.countDocuments({ role: 'user' });
+
+    res.status(200).json({
+      success: true,
+      pagination: {
+        total: totalDocs,
+        page,
+        limit,
+        pages: Math.ceil(totalDocs / limit)
+      },
+      counts: {
+        verified: verifiedCount,
+        unverified: unverifiedCount,
+        declined: declinedCount,
+        registered: registeredCount,
+        total: totalCount
+      },
+      data: players
+    });
+  } catch (error) {
+    console.error('Error fetching players:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching players',
+      error: error.message
+    });
+  }
+};
+
+
   /**
    * @desc    Get single player detailed stats
    * @route   GET /api/admin/players/:userId

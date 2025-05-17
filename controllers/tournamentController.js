@@ -28,6 +28,9 @@
         password
       } = req.body;
       
+      // Parse entry fee as number - MOVED THIS UP
+      const parsedEntryFee = parseFloat(entryFee) || 0; // Default to 0 if invalid
+      
       // Validate required fields
       if (!title || !category || !rules || !startDate || !startTime || !duration || !prizeType || !fundingMethod) {
         return res.status(400).json({ 
@@ -193,6 +196,8 @@
           error: prizeCalcError.message
         });
       }
+      
+      // Check if entry fee is higher than total prize pool
       if (parsedEntryFee > totalPrizePool) {
         return res.status(400).json({
           message: 'Entry fee cannot be higher than the total prize pool',
@@ -200,6 +205,7 @@
           totalPrizePool: totalPrizePool
         });
       }
+      
       // Generate unique transaction reference that we can use later
       const transactionReference = `FUND-${uuidv4().slice(0,8)}`;
 
@@ -247,9 +253,6 @@
       // 1 hour = 3600000 milliseconds
       const durationInHours = parseFloat(duration) || 3; // Default to 3 hours if invalid
       const durationInMs = durationInHours * 3600000;
-      
-      // Parse entry fee as number
-      const parsedEntryFee = parseFloat(entryFee) || 0; // Default to 0 if invalid
 
       try {
         // Create tournament with normalized data
@@ -321,6 +324,7 @@
     }
   });
 
+  
 // @desc    Get all tournaments with pagination and filters
 // @route   GET /api/tournaments
 // @access  Public
