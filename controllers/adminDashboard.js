@@ -2365,6 +2365,16 @@ exports.getAllPlayers = async (req, res) => {
 exports.downloadPaginatedPlayerData = async (req, res) => {
   console.log('downloadingPaginatedPlayerData');
   try {
+    // Get the format from the query (pdf or csv, default to json)
+    const format = req.query.format?.toLowerCase() || 'json';
+    
+    if (!['json', 'pdf', 'csv'].includes(format)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid format. Supported formats: json, pdf, csv'
+      });
+    }
+    
     // Extract pagination parameters from query
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -2417,11 +2427,32 @@ exports.downloadPaginatedPlayerData = async (req, res) => {
           bankDetails: user.bankDetails || {}
         },
         tournaments: {
-          created: createdTournaments,
-          registered: registeredTournaments
+          created: createdTournaments.map(t => ({
+            title: t.title,
+            startDate: t.startDate,
+            status: t.status,
+            participantsCount: t.participants?.length || 0,
+            category: t.category
+          })),
+          registered: registeredTournaments.map(t => ({
+            title: t.title,
+            startDate: t.startDate,
+            status: t.status,
+            category: t.category
+          }))
         },
-        transactions: transactions,
-        verificationHistory: verificationHistory
+        transactions: transactions.map(t => ({
+          type: t.type,
+          amount: t.amount,
+          status: t.status,
+          reference: t.reference,
+          createdAt: t.createdAt
+        })),
+        verificationHistory: verificationHistory.map(v => ({
+          status: v.status,
+          createdAt: v.createdAt,
+          updatedAt: v.updatedAt
+        }))
       };
       
       usersData.push(userData);
@@ -2439,12 +2470,190 @@ exports.downloadPaginatedPlayerData = async (req, res) => {
       data: usersData
     };
     
-    // Set headers for file download
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', `attachment; filename=players_page${page}_limit${limit}.json`);
+    // Create a filename based on parameters
+    const filename = `players_page${page}_limit${limit}`;
     
-    // Send the data as a downloadable file
-    res.status(200).json(responseData);
+    // Handle different formats
+    if (format === 'json') {
+      // Set headers for JSON file download
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename=${filename}.json`);
+      
+      // Send the data as a downloadable file
+      return res.status(200).json(responseData);
+    }
+    else if (format === 'pdf') {
+      try {
+        // Try to require PDFKit
+        const PDFDocument = require('pdfkit');
+        const doc = new PDFDocument({ margin: 50, size: 'A4' });
+        
+        // Set response headers for PDF download
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=${filename}.pdf`);
+        
+        // Pipe the PDF document to the response
+        doc.pipe(res);
+        
+        // Add title
+        doc.fontSize(20).text('Player Data Report', { align: 'center' });
+        doc.moveDown();
+        
+        // Add pagination info
+        doc.fontSize(12).text(`Page: ${page} of ${totalPages}`);
+        doc.fontSize(12).text(`Records per page: ${limit}`);
+        doc.fontSize(12).text(`Total players: ${totalUsers}`);
+        doc.moveDown();
+        
+        // For each user, add a section
+        usersData.forEach((user, index) => {
+          // Add a horizontal line before each user except the first one
+          if (index > 0) {
+            doc.moveTo(50, doc.y)
+               .lineTo(550, doc.y)
+               .stroke();
+            doc.moveDown();
+          }
+          
+          // Personal Info Section
+          doc.fontSize(16).text(`Player: ${user.personalInfo.fullName}`);
+          doc.fontSize(12).text(`Email: ${user.personalInfo.email}`);
+          doc.fontSize(12).text(`Lichess Username: ${user.personalInfo.lichessUsername || 'N/A'}`);
+          doc.fontSize(12).text(`Phone: ${user.personalInfo.phoneNumber || 'N/A'}`);
+          doc.fontSize(12).text(`Verification Status: ${user.personalInfo.isVerified ? 'Verified' : 'Not Verified'}`);
+          doc.fontSize(12).text(`Wallet Balance: ${user.personalInfo.walletBalance || 0}`);
+          doc.fontSize(12).text(`Joined: ${new Date(user.personalInfo.createdAt).toLocaleString()}`);
+          doc.moveDown();
+          
+          // Tournaments Section
+          doc.fontSize(14).text('Tournaments');
+          
+          // Created Tournaments
+          if (user.tournaments.created.length > 0) {
+            doc.fontSize(12).text('Created Tournaments:');
+            user.tournaments.created.forEach((tournament, i) => {
+              doc.fontSize(10).text(`  ${i+1}. ${tournament.title} (${tournament.category || 'N/A'}) - ${tournament.status} - ${new Date(tournament.startDate).toLocaleDateString()}`);
+            });
+          } else {
+            doc.fontSize(12).text('Created Tournaments: None');
+          }
+          doc.moveDown(0.5);
+          
+          // Registered Tournaments
+          if (user.tournaments.registered.length > 0) {
+            doc.fontSize(12).text('Registered Tournaments:');
+            user.tournaments.registered.forEach((tournament, i) => {
+              doc.fontSize(10).text(`  ${i+1}. ${tournament.title} (${tournament.category || 'N/A'}) - ${tournament.status} - ${new Date(tournament.startDate).toLocaleDateString()}`);
+            });
+          } else {
+            doc.fontSize(12).text('Registered Tournaments: None');
+          }
+          doc.moveDown();
+          
+          // Transactions Section
+          doc.fontSize(14).text('Transactions');
+          if (user.transactions.length > 0) {
+            user.transactions.forEach((transaction, i) => {
+              if (i < 5) { // Limit to 5 transactions to save space
+                doc.fontSize(10).text(`  ${i+1}. ${transaction.type} - ${transaction.amount} - ${transaction.status} - ${new Date(transaction.createdAt).toLocaleDateString()}`);
+              } else if (i === 5) {
+                doc.fontSize(10).text(`  ... and ${user.transactions.length - 5} more transactions`);
+              }
+            });
+          } else {
+            doc.fontSize(12).text('Transactions: None');
+          }
+          doc.moveDown();
+          
+          // Check if adding another user would exceed page
+          if (index < usersData.length - 1 && doc.y > 700) {
+            doc.addPage();
+          }
+        });
+        
+        // Finalize the PDF
+        doc.end();
+      } catch (error) {
+        if (error.code === 'MODULE_NOT_FOUND') {
+          return res.status(500).json({
+            success: false,
+            message: 'PDF generation module not installed',
+            error: 'Please run: npm install pdfkit'
+          });
+        }
+        throw error; // Re-throw if it's a different error
+      }
+    }
+    else if (format === 'csv') {
+      try {
+        // Try to require csv-writer
+        const createCsvStringifier = require('csv-writer').createObjectCsvStringifier;
+        
+        // Flatten the user data for CSV export
+        const flattenedData = usersData.map(user => {
+          const createdTournamentCount = user.tournaments.created.length;
+          const registeredTournamentCount = user.tournaments.registered.length;
+          const transactionCount = user.transactions.length;
+          
+          return {
+            id: user.personalInfo._id.toString(),
+            fullName: user.personalInfo.fullName,
+            email: user.personalInfo.email,
+            lichessUsername: user.personalInfo.lichessUsername || 'N/A',
+            phoneNumber: user.personalInfo.phoneNumber || 'N/A',
+            isVerified: user.personalInfo.isVerified ? 'Yes' : 'No',
+            walletBalance: user.personalInfo.walletBalance || 0,
+            joinDate: new Date(user.personalInfo.createdAt).toLocaleDateString(),
+            bankName: user.personalInfo.bankDetails?.bankName || 'N/A',
+            accountName: user.personalInfo.bankDetails?.accountName || 'N/A',
+            tournamentCreated: createdTournamentCount,
+            tournamentRegistered: registeredTournamentCount,
+            transactionCount: transactionCount,
+            // Add more fields as needed
+          };
+        });
+        
+        // Define CSV header
+        const csvStringifier = createCsvStringifier({
+          header: [
+            { id: 'id', title: 'ID' },
+            { id: 'fullName', title: 'Full Name' },
+            { id: 'email', title: 'Email' },
+            { id: 'lichessUsername', title: 'Lichess Username' },
+            { id: 'phoneNumber', title: 'Phone Number' },
+            { id: 'isVerified', title: 'Verified' },
+            { id: 'walletBalance', title: 'Wallet Balance' },
+            { id: 'joinDate', title: 'Join Date' },
+            { id: 'bankName', title: 'Bank Name' },
+            { id: 'accountName', title: 'Account Name' },
+            { id: 'tournamentCreated', title: 'Tournaments Created' },
+            { id: 'tournamentRegistered', title: 'Tournaments Registered' },
+            { id: 'transactionCount', title: 'Transactions' },
+          ]
+        });
+        
+        // Create CSV content
+        const headerString = csvStringifier.getHeaderString();
+        const recordsString = csvStringifier.stringifyRecords(flattenedData);
+        const csvContent = headerString + recordsString;
+        
+        // Set response headers for CSV download
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename=${filename}.csv`);
+        
+        // Send the CSV data
+        res.send(csvContent);
+      } catch (error) {
+        if (error.code === 'MODULE_NOT_FOUND') {
+          return res.status(500).json({
+            success: false,
+            message: 'CSV generation module not installed',
+            error: 'Please run: npm install csv-writer'
+          });
+        }
+        throw error; // Re-throw if it's a different error
+      }
+    }
   } catch (error) {
     console.error('Error downloading paginated player data:', error);
     res.status(500).json({
@@ -2456,45 +2665,168 @@ exports.downloadPaginatedPlayerData = async (req, res) => {
 };
 
 
-
   /**
    * @desc    Download profile picture
    * @route   GET /api/admin/players/:userId/profilepic
    * @access  Private/Admin
    */
-  exports.downloadProfilePicture = async (req, res) => {
-    try {
-      const userId = req.params.userId;
-  
-      if (!mongoose.Types.ObjectId.isValid(userId)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid user ID'
-        });
-      }
-  
-      const user = await User.findById(userId).select('profilePic').lean();
-  
-      if (!user || !user.profilePic) {
-        return res.status(404).json({
-          success: false,
-          message: 'User or profile picture not found'
-        });
-      }
-  
-      // This is a redirect to the actual image URL
-      // For security, you might want to download the image and serve it directly
-      res.redirect(user.profilePic);
-    } catch (error) {
-      console.error('Error fetching profile picture:', error);
-      res.status(500).json({
+ exports.downloadProfilePicture = async (req, res) => {
+  try {
+    const userId = req.params.userId;
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
         success: false,
-        message: 'Error fetching profile picture',
-        error: error.message
+        message: 'Invalid user ID'
       });
     }
-  };
-  
+
+    const user = await User.findById(userId).select('profilePic fullName').lean();
+
+    if (!user || !user.profilePic) {
+      return res.status(404).json({
+        success: false,
+        message: 'User or profile picture not found'
+      });
+    }
+
+    // Determine if the profile picture is a URL or a file path
+    if (user.profilePic.startsWith('http://') || user.profilePic.startsWith('https://')) {
+      try {
+        // Create a safe filename from the user's name
+        const safeName = user.fullName ? 
+          user.fullName.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 
+          `user_${userId}`;
+        
+        // Get file extension from URL
+        const urlParts = user.profilePic.split('.');
+        const fileExtension = urlParts.length > 1 ? 
+          `.${urlParts[urlParts.length - 1].split('?')[0]}` : 
+          '.jpg'; // Default to jpg if no extension found
+          
+        const fileName = `${safeName}_profile${fileExtension}`;
+        
+        // Import required modules
+        const https = require('https');
+        const http = require('http');
+        
+        // Determine which module to use
+        const requester = user.profilePic.startsWith('https://') ? https : http;
+        
+        // Set headers for the response
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        res.setHeader('Content-Type', 'image/jpeg'); // Set appropriate content type
+        
+        // Create a pipe from the URL response to our response
+        requester.get(user.profilePic, (response) => {
+          // If the image URL returns a redirect, follow it
+          if (response.statusCode === 301 || response.statusCode === 302) {
+            const newUrl = response.headers.location;
+            const newRequester = newUrl.startsWith('https://') ? https : http;
+            
+            newRequester.get(newUrl, (redirectResponse) => {
+              redirectResponse.pipe(res);
+            }).on('error', (err) => {
+              console.error('Error following redirect:', err);
+              res.status(500).json({
+                success: false,
+                message: 'Error downloading image after redirect',
+                error: err.message
+              });
+            });
+          } else {
+            // No redirect, pipe the response directly
+            response.pipe(res);
+          }
+        }).on('error', (err) => {
+          console.error('Error downloading image from URL:', err);
+          res.status(500).json({
+            success: false,
+            message: 'Error downloading image from URL',
+            error: err.message
+          });
+        });
+      } catch (error) {
+        console.error('Error processing remote image:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Error processing remote image',
+          error: error.message
+        });
+      }
+    } else {
+      // Handle local file
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        
+        // Ensure the path is valid and secure (prevent directory traversal)
+        const filePath = path.resolve(user.profilePic);
+        
+        // Check if file exists
+        if (!fs.existsSync(filePath)) {
+          return res.status(404).json({
+            success: false,
+            message: 'Profile picture file not found'
+          });
+        }
+        
+        // Get file extension
+        const fileExtension = path.extname(filePath);
+        const safeName = user.fullName ? 
+          user.fullName.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 
+          `user_${userId}`;
+        const fileName = `${safeName}_profile${fileExtension}`;
+        
+        // Set headers for file download
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        
+        // Use file extension to set appropriate content type
+        const contentTypeMap = {
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.png': 'image/png',
+          '.gif': 'image/gif',
+          '.webp': 'image/webp'
+        };
+        const contentType = contentTypeMap[fileExtension.toLowerCase()] || 'application/octet-stream';
+        res.setHeader('Content-Type', contentType);
+        
+        // Stream the file to the response
+        const fileStream = fs.createReadStream(filePath);
+        fileStream.pipe(res);
+        
+        // Handle errors in file stream
+        fileStream.on('error', (err) => {
+          console.error('Error reading local file:', err);
+          if (!res.headersSent) {
+            res.status(500).json({
+              success: false,
+              message: 'Error reading profile picture file',
+              error: err.message
+            });
+          }
+        });
+      } catch (error) {
+        console.error('Error processing local image:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Error processing local image',
+          error: error.message
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Error fetching profile picture:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching profile picture',
+      error: error.message
+    });
+  }
+};
+
+
   /**
    * @desc    Change user verification status
    * @route   PUT /api/admin/players/:userId/status
