@@ -2,6 +2,29 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
 /**
+ * Middleware to check if a route should be excluded from authentication
+ */
+exports.checkPublicRoute = (req, res, next) => {
+  // List of public routes that don't require authentication
+  const publicRoutes = [
+    { path: '/api/puzzles/hint/:attemptId', method: 'GET' },
+  ];
+  
+  // Check if current route is in public routes
+  const isPublicRoute = publicRoutes.some(route => 
+    req.path.startsWith(route.path) && req.method === route.method
+  );
+  
+  if (isPublicRoute) {
+    console.log('Public route accessed:', req.path);
+    return next(); // Skip authentication for public routes
+  }
+  
+  // Not a public route, proceed with authentication
+  return exports.protect(req, res, next);
+};
+
+/**
  * Middleware to authenticate users based on JWT token
  * This middleware verifies the token and attaches the user to the request object
  */

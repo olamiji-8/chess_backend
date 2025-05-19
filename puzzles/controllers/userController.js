@@ -1,7 +1,5 @@
-// User controller
-const User = require('../models/userModel');
+const PuzzleUser = require('../models/userModel');
 
-// Create a new user or get existing user
 exports.createOrGetUser = async (req, res) => {
   try {
     const { username } = req.body;
@@ -11,7 +9,7 @@ exports.createOrGetUser = async (req, res) => {
     }
     
     // Check if username is taken
-    let user = await User.findOne({ username });
+    let user = await PuzzleUser.findOne({ username });
     
     if (user) {
       return res.status(200).json({
@@ -30,7 +28,7 @@ exports.createOrGetUser = async (req, res) => {
     }
     
     // Create new user
-    user = new User({ username });
+    user = new PuzzleUser({ username });
     await user.save();
     
     res.status(201).json({
@@ -62,7 +60,7 @@ exports.checkUsername = async (req, res) => {
       return res.status(400).json({ message: 'Username is required' });
     }
     
-    const user = await User.findOne({ username });
+    const user = await PuzzleUser.findOne({ username });
     
     res.status(200).json({
       exists: !!user,
@@ -80,7 +78,7 @@ exports.getUserDetails = async (req, res) => {
   try {
     const { userId } = req.params;
     
-    const user = await User.findById(userId);
+    const user = await PuzzleUser.findById(userId);
     
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -107,7 +105,7 @@ exports.getUserDetails = async (req, res) => {
 // Get leaderboard
 exports.getLeaderboard = async (req, res) => {
   try {
-    const topUsers = await User.find()
+    const topUsers = await PuzzleUser.find()
       .sort({ points: -1 })
       .limit(50) // Top 50 users
       .select('username points streak playedGames wonGames');

@@ -1,4 +1,3 @@
-// Routes for puzzle-related endpoints
 const express = require('express');
 const router = express.Router();
 const puzzleController = require('../controllers/puzzleController');
@@ -19,6 +18,3 @@ router.post('/end/:attemptId', puzzleController.endPuzzleAttempt);
 router.post('/create', puzzleController.createPuzzle);
 
 module.exports = router;
-
-
-

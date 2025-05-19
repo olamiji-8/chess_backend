@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
-const UserSchema = new Schema({
+const PuzzleUserSchema = new Schema({
   username: {
     type: String,
     required: true,
@@ -39,7 +39,7 @@ const UserSchema = new Schema({
 });
 
 // Method to check if user can play puzzle today
-UserSchema.methods.canPlayPuzzleToday = function() {
+PuzzleUserSchema.methods.canPlayPuzzleToday = function() {
   if (!this.lastPuzzleDate) return true;
   
   const lastPuzzle = new Date(this.lastPuzzleDate);
@@ -51,7 +51,7 @@ UserSchema.methods.canPlayPuzzleToday = function() {
 };
 
 // Method to update user streak
-UserSchema.methods.updateStreak = function() {
+PuzzleUserSchema.methods.updateStreak = function() {
   const now = new Date();
   
   // If no previous streak or it was updated more than 48 hours ago, reset streak
@@ -70,4 +70,5 @@ UserSchema.methods.updateStreak = function() {
   return this.streak;
 };
 
-module.exports = mongoose.models.User || mongoose.model('User', UserSchema);
+// Using a different model name to avoid conflicts
+module.exports = mongoose.model('PuzzleUser', PuzzleUserSchema);

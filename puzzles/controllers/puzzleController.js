@@ -63,6 +63,14 @@ exports.getHint = async (req, res) => {
   try {
     const { attemptId } = req.params;
     
+    // Validate the attemptId is a valid ObjectId
+    if (!mongoose.Types.ObjectId.isValid(attemptId)) {
+      return res.status(400).json({ 
+        message: 'Invalid puzzle attempt ID format',
+        error: 'The provided ID is not a valid MongoDB ObjectId'
+      });
+    }
+    
     // Find the puzzle attempt
     const puzzleAttempt = await PuzzleAttempt.findById(attemptId).populate('puzzle');
     

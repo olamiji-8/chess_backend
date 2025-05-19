@@ -1,10 +1,9 @@
-// Routes for user-related endpoints
 const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
 
-// Create or get user by username
-router.post('/', userController.createOrGetUser);
+// Create a new user or get existing user
+router.post('/username', userController.createOrGetUser);
 
 // Check if username exists
 router.get('/check/:username', userController.checkUsername);
