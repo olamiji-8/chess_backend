@@ -650,15 +650,47 @@ exports.getAllVerifications = asyncHandler(async (req, res) => {
     // Count total documents for pagination
     const totalDocs = await VerificationRequest.countDocuments(query);
 
-    // Get verification requests with pagination
-    // Added idType and idNumber to the selection
-    const verifications = await VerificationRequest.find(query)
-      .populate('user', 'fullName email lichessUsername profilePic')
-      .select('user fullName address idCardImage selfieImage status createdAt updatedAt idType idNumber')
+    // Get the raw data using MongoDB's native driver to ensure we get all fields
+    // This bypasses any Mongoose schema restrictions
+    const db = mongoose.connection.db;
+    const collection = db.collection('verificationrequests'); // Make sure this matches your actual collection name
+    
+    let rawVerifications = await collection.find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limit);
-
+      .limit(limit)
+      .toArray();
+    
+    // Now populate the user data
+    const userIds = rawVerifications
+      .filter(v => v.user && typeof v.user === 'object')
+      .map(v => v.user);
+    
+    const users = await User.find({ _id: { $in: userIds } })
+      .select('fullName email lichessUsername profilePic')
+      .lean();
+    
+    const usersMap = users.reduce((map, user) => {
+      map[user._id.toString()] = user;
+      return map;
+    }, {});
+    
+    // Map the verification data with populated user
+    const verifications = rawVerifications.map(v => {
+      const verification = { ...v };
+      
+      // Ensure idType and idNumber are included (even if not in database)
+      verification.idType = verification.idType || null;
+      verification.idNumber = verification.idNumber || null;
+      
+      // Replace user ID with user object if available
+      if (verification.user && usersMap[verification.user.toString()]) {
+        verification.user = usersMap[verification.user.toString()];
+      }
+      
+      return verification;
+    });
+    
     // Get counts for each status
     const pendingCount = await VerificationRequest.countDocuments({ status: 'pending' });
     const approvedCount = await VerificationRequest.countDocuments({ status: 'approved' });
@@ -689,7 +721,7 @@ exports.getAllVerifications = asyncHandler(async (req, res) => {
     });
   }
 });
-  
+
   /**
    * @desc    Approve a verification request
    * @route   PUT /api/admin/verifications/:requestId/approve
