@@ -622,71 +622,73 @@ exports.getPlayerDetails = asyncHandler(async (req, res) => {
  * @access  Admin only
  */
 exports.getAllVerifications = asyncHandler(async (req, res) => {
-    try {
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 10;
-      const skip = (page - 1) * limit;
-      const status = req.query.status || 'pending'; // Default to pending
-      const search = req.query.search || '';
-  
-      // Build query
-      const query = { status };
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+    const status = req.query.status || 'pending'; // Default to pending
+    const search = req.query.search || '';
+
+    // Build query
+    const query = { status };
+
+    // Add search functionality
+    if (search) {
+      // We need to join with User model to search by username or email
+      const users = await User.find({
+        $or: [
+          { fullName: { $regex: search, $options: 'i' } },
+          { email: { $regex: search, $options: 'i' } },
+          { lichessUsername: { $regex: search, $options: 'i' } }
+        ]
+      }).select('_id');
       
-      // Add search functionality
-      if (search) {
-        // We need to join with User model to search by username or email
-        const users = await User.find({
-          $or: [
-            { fullName: { $regex: search, $options: 'i' } },
-            { email: { $regex: search, $options: 'i' } },
-            { lichessUsername: { $regex: search, $options: 'i' } }
-          ]
-        }).select('_id');
-        
-        const userIds = users.map(user => user._id);
-        query.user = { $in: userIds };
-      }
-  
-      // Count total documents for pagination
-      const totalDocs = await VerificationRequest.countDocuments(query);
-  
-      // Get verification requests with pagination
-      const verifications = await VerificationRequest.find(query)
-        .populate('user', 'fullName email lichessUsername profilePic')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit);
-  
-      // Get counts for each status
-      const pendingCount = await VerificationRequest.countDocuments({ status: 'pending' });
-      const approvedCount = await VerificationRequest.countDocuments({ status: 'approved' });
-      const rejectedCount = await VerificationRequest.countDocuments({ status: 'rejected' });
-  
-      res.status(200).json({
-        success: true,
-        pagination: {
-          total: totalDocs,
-          page,
-          limit,
-          pages: Math.ceil(totalDocs / limit)
-        },
-        counts: {
-          pending: pendingCount,
-          approved: approvedCount,
-          rejected: rejectedCount,
-          total: pendingCount + approvedCount + rejectedCount
-        },
-        data: verifications
-      });
-    } catch (error) {
-      console.error('Error fetching verification requests:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Error fetching verification requests',
-        error: error.message
-      });
+      const userIds = users.map(user => user._id);
+      query.user = { $in: userIds };
     }
-  });
+
+    // Count total documents for pagination
+    const totalDocs = await VerificationRequest.countDocuments(query);
+
+    // Get verification requests with pagination
+    // Added idType and idNumber to the selection
+    const verifications = await VerificationRequest.find(query)
+      .populate('user', 'fullName email lichessUsername profilePic')
+      .select('user fullName address idCardImage selfieImage status createdAt updatedAt idType idNumber')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    // Get counts for each status
+    const pendingCount = await VerificationRequest.countDocuments({ status: 'pending' });
+    const approvedCount = await VerificationRequest.countDocuments({ status: 'approved' });
+    const rejectedCount = await VerificationRequest.countDocuments({ status: 'rejected' });
+
+    res.status(200).json({
+      success: true,
+      pagination: {
+        total: totalDocs,
+        page,
+        limit,
+        pages: Math.ceil(totalDocs / limit)
+      },
+      counts: {
+        pending: pendingCount,
+        approved: approvedCount,
+        rejected: rejectedCount,
+        total: pendingCount + approvedCount + rejectedCount
+      },
+      data: verifications
+    });
+  } catch (error) {
+    console.error('Error fetching verification requests:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching verification requests',
+      error: error.message
+    });
+  }
+});
   
   /**
    * @desc    Approve a verification request
