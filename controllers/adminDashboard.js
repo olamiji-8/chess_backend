@@ -392,6 +392,32 @@ exports.getDashboardStats = asyncHandler(async (req, res) => {
     const completedTournaments = await Tournament.countDocuments({ status: 'completed' });
     const upcomingTournaments = await Tournament.countDocuments({ status: 'upcoming' });
 
+    // Tournament category statistics
+    const tournamentsByCategory = await Tournament.aggregate([
+      {
+        $group: {
+          _id: "$category",
+          count: { $sum: 1 },
+          participants: { $sum: { $size: "$participants" } }
+        }
+      },
+      {
+        $project: {
+          category: "$_id",
+          count: 1,
+          participants: 1,
+          _id: 0
+        }
+      }
+    ]);
+
+    // Ensure all categories are represented even if they have zero tournaments
+    const allCategories = ['bullet', 'blitz', 'rapid', 'classical'];
+    const categoriesStats = allCategories.map(category => {
+      const found = tournamentsByCategory.find(item => item.category === category);
+      return found || { category, count: 0, participants: 0 };
+    });
+
     // Transactions statistics
     const totalTransactions = await Transaction.countDocuments();
     const pendingWithdrawals = await Transaction.countDocuments({ 
@@ -403,6 +429,25 @@ exports.getDashboardStats = asyncHandler(async (req, res) => {
       status: 'completed' 
     });
     const deposits = await Transaction.countDocuments({ type: 'deposit' });
+
+    // Get transactions by type with amounts
+    const transactionsByType = await Transaction.aggregate([
+      {
+        $group: {
+          _id: '$type',
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$amount' }
+        }
+      },
+      {
+        $project: {
+          type: '$_id',
+          count: 1,
+          totalAmount: 1,
+          _id: 0
+        }
+      }
+    ]);
 
     // Recent activities
     const recentTransactions = await Transaction.find()
@@ -430,13 +475,15 @@ exports.getDashboardStats = asyncHandler(async (req, res) => {
           total: totalTournaments,
           active: activeTournaments,
           completed: completedTournaments,
-          upcoming: upcomingTournaments
+          upcoming: upcomingTournaments,
+          categories: categoriesStats
         },
         transactions: {
           total: totalTransactions,
           pendingWithdrawals,
           completedWithdrawals,
-          deposits
+          deposits,
+          byType: transactionsByType
         },
         recent: {
           transactions: recentTransactions,
@@ -453,6 +500,121 @@ exports.getDashboardStats = asyncHandler(async (req, res) => {
     });
   }
 });
+
+// Get all players
+exports.getAllPlayers = asyncHandler(async (req, res) => {
+  // Pagination
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 10;
+  const startIndex = (page - 1) * limit;
+  const endIndex = page * limit;
+
+  // Filtering
+  const filter = { role: 'user' };
+  
+  if (req.query.verified === 'true') {
+    filter.isVerified = true;
+  } else if (req.query.verified === 'false') {
+    filter.isVerified = false;
+  }
+  
+  if (req.query.search) {
+    filter.$or = [
+      { fullName: { $regex: req.query.search, $options: 'i' } },
+      { email: { $regex: req.query.search, $options: 'i' } },
+      { lichessUsername: { $regex: req.query.search, $options: 'i' } }
+    ];
+  }
+
+  // Sorting
+  const sort = {};
+  if (req.query.sortBy) {
+    const parts = req.query.sortBy.split(':');
+    sort[parts[0]] = parts[1] === 'desc' ? -1 : 1;
+  } else {
+    sort.createdAt = -1; // Default to newest first
+  }
+
+  // Execute query
+  const total = await User.countDocuments(filter);
+  const players = await User.find(filter)
+    .sort(sort)
+    .skip(startIndex)
+    .limit(limit)
+    .select('fullName email phoneNumber lichessUsername isVerified profilePic walletBalance createdAt');
+
+  // Pagination result
+  const pagination = {};
+  if (endIndex < total) {
+    pagination.next = {
+      page: page + 1,
+      limit
+    };
+  }
+
+  if (startIndex > 0) {
+    pagination.prev = {
+      page: page - 1,
+      limit
+    };
+  }
+
+  res.status(200).json({
+    success: true,
+    count: players.length,
+    pagination,
+    data: players,
+    total
+  });
+});
+
+// Get player details
+exports.getPlayerDetails = asyncHandler(async (req, res) => {
+  const player = await User.findById(req.params.userId)
+    .select('-password')
+    .populate({
+      path: 'registeredTournaments',
+      select: 'title category startDate status'
+    });
+
+  if (!player) {
+    return res.status(404).json({
+      success: false,
+      message: 'Player not found'
+    });
+  }
+
+  // Get player's transactions
+  const transactions = await Transaction.find({ user: player._id })
+    .sort({ createdAt: -1 })
+    .limit(10)
+    .populate('tournament', 'title');
+
+  // Get verification status if applicable
+  let verificationStatus = null;
+  if (VerificationRequest) {
+    const verification = await VerificationRequest.findOne({ user: player._id })
+      .sort({ createdAt: -1 });
+    
+    if (verification) {
+      verificationStatus = {
+        status: verification.status,
+        submittedAt: verification.createdAt,
+        updatedAt: verification.updatedAt
+      };
+    }
+  }
+
+  res.status(200).json({
+    success: true,
+    data: {
+      player,
+      transactions,
+      verificationStatus
+    }
+  });
+});
+
 
 /**
  * @desc    Get all verification requests with pagination
