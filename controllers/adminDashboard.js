@@ -2139,7 +2139,7 @@ exports.getAllPlayers = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
-    const filter = req.query.filter || 'all'; // 'all', 'verified', 'unverified', 'declined', 'registered'
+    const filter = req.query.filter || 'all'; // 'all', 'verified', 'unverified', 'declined', 'registered', 'pending'
     const search = req.query.search || '';
 
     // Build match criteria
@@ -2148,13 +2148,19 @@ exports.getAllPlayers = async (req, res) => {
     // Apply filter
     if (filter === 'verified') {
       matchCriteria.isVerified = true;
+    } else if (filter === 'pending') {
+      // For pending, get users who have pending verification requests
+      const pendingUserIds = await VerificationRequest.find({ status: 'pending' })
+        .distinct('user');
+      matchCriteria._id = { $in: pendingUserIds };
     } else if (filter === 'unverified') {
       matchCriteria.isVerified = false;
-      // Exclude declined users (those who have rejected verification requests)
-      const declinedUserIds = await VerificationRequest.find({ status: 'rejected' })
-        .distinct('user');
-      if (declinedUserIds.length > 0) {
-        matchCriteria._id = { $nin: declinedUserIds };
+      // Exclude declined users and pending users
+      const excludedUserIds = await VerificationRequest.find({ 
+        status: { $in: ['rejected', 'pending'] } 
+      }).distinct('user');
+      if (excludedUserIds.length > 0) {
+        matchCriteria._id = { $nin: excludedUserIds };
       }
     } else if (filter === 'declined') {
       // For declined, get users who have rejected verification requests
@@ -2226,11 +2232,17 @@ exports.getAllPlayers = async (req, res) => {
       if (player.isVerified) {
         status = 'verified';
       } else {
-        // Check if user has any rejected verification requests
+        // Check for pending verification requests
+        const hasPendingRequest = player.verificationRequests && 
+          player.verificationRequests.some(req => req.status === 'pending');
+        
+        // Check for rejected verification requests
         const hasRejectedRequest = player.verificationRequests && 
           player.verificationRequests.some(req => req.status === 'rejected');
         
-        if (hasRejectedRequest) {
+        if (hasPendingRequest) {
+          status = 'pending';
+        } else if (hasRejectedRequest) {
           status = 'declined';
         }
       }
@@ -2248,15 +2260,20 @@ exports.getAllPlayers = async (req, res) => {
     // Count of verified users
     const verifiedCount = await User.countDocuments({ role: 'user', isVerified: true });
     
+    // Count of users with pending verification requests
+    const pendingUserIds = await VerificationRequest.find({ status: 'pending' }).distinct('user');
+    const pendingCount = pendingUserIds.length;
+    
     // Count of users with rejected verification requests (declined)
     const declinedUserIds = await VerificationRequest.find({ status: 'rejected' }).distinct('user');
     const declinedCount = declinedUserIds.length;
     
-    // Count of unverified users (exclude declined)
+    // Count of unverified users (exclude declined and pending)
+    const excludedUserIds = [...pendingUserIds, ...declinedUserIds];
     const unverifiedCount = await User.countDocuments({ 
       role: 'user', 
       isVerified: false,
-      _id: { $nin: declinedUserIds }
+      _id: { $nin: excludedUserIds }
     });
     
     // Count of registered users (in tournaments)
@@ -2279,6 +2296,7 @@ exports.getAllPlayers = async (req, res) => {
       counts: {
         verified: verifiedCount,
         unverified: unverifiedCount,
+        pending: pendingCount,
         declined: declinedCount,
         registered: registeredCount,
         total: totalCount
@@ -2294,7 +2312,6 @@ exports.getAllPlayers = async (req, res) => {
     });
   }
 };
-
 
   /**
    * @desc    Get single player detailed stats
