@@ -747,29 +747,11 @@ exports.getVerificationStatus = asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'User not found' });
   }
   
-  if (user.isVerified) {
-    return res.status(200).json({
-      success: true,
-      isVerified: true,
-      message: 'Your account is verified'
-    });
-  }
-  
   // Check if there's a pending verification request
   const pendingRequest = await VerificationRequest.findOne({
     user: userId,
     status: 'pending'
   }).sort({ createdAt: -1 });
-  
-  if (pendingRequest) {
-    return res.status(200).json({
-      success: true,
-      isVerified: false,
-      hasPendingRequest: true,
-      requestDate: pendingRequest.createdAt,
-      message: 'Your verification request is pending review'
-    });
-  }
   
   // Check if there's a rejected verification request
   const rejectedRequest = await VerificationRequest.findOne({
@@ -777,20 +759,31 @@ exports.getVerificationStatus = asyncHandler(async (req, res) => {
     status: 'rejected'
   }).sort({ createdAt: -1 });
   
-  if (rejectedRequest) {
-    return res.status(200).json({
-      success: true,
-      isVerified: false,
-      hasRejectedRequest: true,
-      requestDate: rejectedRequest.createdAt,
-      rejectionReason: rejectedRequest.rejectionReason || 'No reason provided',
-      message: 'Your verification request was rejected'
-    });
+  // Prepare response object with consistent fields
+  const response = {
+    success: true,
+    isVerified: user.isVerified,
+    hasPendingRequest: !!pendingRequest,
+    message: user.isVerified ? 'Your account is verified' : 'Your account is not verified'
+  };
+  
+  // Add pending request information if exists
+  if (pendingRequest) {
+    response.requestDate = pendingRequest.createdAt;
+    response.message = 'Your verification request is pending review';
   }
   
-  res.status(200).json({
-    success: true,
-    isVerified: false,
-    message: 'Your account is not verified'
-  });
+  // Add rejected request information if exists
+  if (rejectedRequest) {
+    response.hasRejectedRequest = true;
+    response.requestDate = rejectedRequest.createdAt;
+    response.rejectionReason = rejectedRequest.rejectionReason || 'No reason provided';
+    
+    // Only override message if not pending (pending takes precedence)
+    if (!pendingRequest) {
+      response.message = 'Your verification request was rejected';
+    }
+  }
+  
+  res.status(200).json(response);
 });
