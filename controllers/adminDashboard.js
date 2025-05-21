@@ -512,10 +512,27 @@ exports.getAllPlayers = asyncHandler(async (req, res) => {
   // Filtering
   const filter = { role: 'user' };
   
-  if (req.query.verified === 'true') {
-    filter.isVerified = true;
-  } else if (req.query.verified === 'false') {
-    filter.isVerified = false;
+  // Handle verification filter
+  if (req.query.filter) {
+    if (req.query.filter === 'verified') {
+      filter.isVerified = true;
+    } else if (req.query.filter === 'unverified') {
+      filter.isVerified = false;
+    } else if (req.query.filter === 'pending') {
+      // For pending verification, we need to find users with pending verification requests
+      const pendingUsers = await VerificationRequest.find({ status: 'pending' })
+        .distinct('user');
+      
+      filter._id = { $in: pendingUsers };
+      filter.isVerified = false; // They should also be unverified
+    }
+  } else {
+    // Legacy filtering support
+    if (req.query.verified === 'true') {
+      filter.isVerified = true;
+    } else if (req.query.verified === 'false') {
+      filter.isVerified = false;
+    }
   }
   
   if (req.query.search) {
@@ -537,11 +554,38 @@ exports.getAllPlayers = asyncHandler(async (req, res) => {
 
   // Execute query
   const total = await User.countDocuments(filter);
+  
+  // Get all users matching the filter
   const players = await User.find(filter)
     .sort(sort)
     .skip(startIndex)
     .limit(limit)
     .select('fullName email phoneNumber lichessUsername isVerified profilePic walletBalance createdAt');
+
+  // Get verification status for each player
+  const enhancedPlayers = await Promise.all(players.map(async (player) => {
+    const playerObj = player.toObject();
+    
+    // Count tournaments
+    playerObj.registeredTournamentsCount = await Registration.countDocuments({ user: player._id });
+    playerObj.createdTournamentsCount = await Tournament.countDocuments({ organizer: player._id });
+    
+    // Check for pending verification
+    const pendingVerification = await VerificationRequest.findOne({ 
+      user: player._id,
+      status: 'pending'
+    });
+    
+    if (pendingVerification) {
+      playerObj.status = 'pending';
+    } else if (player.isVerified) {
+      playerObj.status = 'verified';
+    } else {
+      playerObj.status = 'unverified';
+    }
+    
+    return playerObj;
+  }));
 
   // Pagination result
   const pagination = {};
@@ -559,14 +603,31 @@ exports.getAllPlayers = asyncHandler(async (req, res) => {
     };
   }
 
+  // Get counts for reporting
+  const verifiedCount = await User.countDocuments({ role: 'user', isVerified: true });
+  const unverifiedCount = await User.countDocuments({ role: 'user', isVerified: false });
+  const pendingVerifications = await VerificationRequest.countDocuments({ status: 'pending' });
+  const approvedVerifications = await VerificationRequest.countDocuments({ status: 'approved' });
+  const rejectedVerifications = await VerificationRequest.countDocuments({ status: 'rejected' });
+
   res.status(200).json({
     success: true,
-    count: players.length,
+    count: enhancedPlayers.length,
     pagination,
-    data: players,
-    total
+    data: enhancedPlayers,
+    total,
+    counts: {
+      verified: verifiedCount,
+      unverified: unverifiedCount,
+      pending: pendingVerifications,
+      approved: approvedVerifications,
+      rejected: rejectedVerifications,
+      total: verifiedCount + unverifiedCount
+    }
   });
 });
+
+
 
 // Get player details
 exports.getPlayerDetails = asyncHandler(async (req, res) => {
@@ -626,11 +687,12 @@ exports.getAllVerifications = asyncHandler(async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
-    const status = req.query.status || 'pending'; // Default to pending
+    // Allow 'all' as a valid status query parameter
+    const requestedStatus = req.query.status || 'pending'; // Default to pending
     const search = req.query.search || '';
 
-    // Build query
-    const query = { status };
+    // Build query - handle 'all' status specially
+    const query = requestedStatus !== 'all' ? { status: requestedStatus } : {};
 
     // Add search functionality
     if (search) {
@@ -650,52 +712,29 @@ exports.getAllVerifications = asyncHandler(async (req, res) => {
     // Count total documents for pagination
     const totalDocs = await VerificationRequest.countDocuments(query);
 
-    // Get the raw data using MongoDB's native driver to ensure we get all fields
-    // This bypasses any Mongoose schema restrictions
-    const db = mongoose.connection.db;
-    const collection = db.collection('verificationrequests'); // Make sure this matches your actual collection name
-    
-    let rawVerifications = await collection.find(query)
+    // Get the verification requests along with user data
+    let verifications = await VerificationRequest.find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .toArray();
-    
-    // Now populate the user data
-    const userIds = rawVerifications
-      .filter(v => v.user && typeof v.user === 'object')
-      .map(v => v.user);
-    
-    const users = await User.find({ _id: { $in: userIds } })
-      .select('fullName email lichessUsername profilePic')
+      .populate('user', 'fullName email lichessUsername profilePic isVerified')
       .lean();
-    
-    const usersMap = users.reduce((map, user) => {
-      map[user._id.toString()] = user;
-      return map;
-    }, {});
-    
-    // Map the verification data with populated user
-    const verifications = rawVerifications.map(v => {
-      const verification = { ...v };
-      
-      // Ensure idType and idNumber are included (even if not in database)
-      verification.idType = verification.idType || null;
-      verification.idNumber = verification.idNumber || null;
-      
-      // Replace user ID with user object if available
-      if (verification.user && usersMap[verification.user.toString()]) {
-        verification.user = usersMap[verification.user.toString()];
-      }
-      
-      return verification;
-    });
     
     // Get counts for each status
     const pendingCount = await VerificationRequest.countDocuments({ status: 'pending' });
     const approvedCount = await VerificationRequest.countDocuments({ status: 'approved' });
     const rejectedCount = await VerificationRequest.countDocuments({ status: 'rejected' });
-
+    const totalCount = pendingCount + approvedCount + rejectedCount;
+    
+    // Also get verified and unverified user counts
+    const verifiedCount = await User.countDocuments({ isVerified: true, role: 'user' });
+    const unverifiedCount = await User.countDocuments({ isVerified: false, role: 'user' });
+    
+    // Get users with pending verification status for reporting
+    const pendingUserIds = await VerificationRequest.find({ status: 'pending' })
+      .distinct('user');
+    const pendingUsersCount = pendingUserIds.length;
+    
     res.status(200).json({
       success: true,
       pagination: {
@@ -705,10 +744,14 @@ exports.getAllVerifications = asyncHandler(async (req, res) => {
         pages: Math.ceil(totalDocs / limit)
       },
       counts: {
+        verified: verifiedCount,
+        unverified: unverifiedCount - pendingUsersCount, // Remove pending from unverified
         pending: pendingCount,
+        pendingUsers: pendingUsersCount, // Add count of unique users with pending status
         approved: approvedCount,
         rejected: rejectedCount,
-        total: pendingCount + approvedCount + rejectedCount
+        total: totalCount,
+        registered: verifiedCount + unverifiedCount // Total number of users
       },
       data: verifications
     });
@@ -722,7 +765,8 @@ exports.getAllVerifications = asyncHandler(async (req, res) => {
   }
 });
 
-  /**
+
+/**
    * @desc    Approve a verification request
    * @route   PUT /api/admin/verifications/:requestId/approve
    * @access  Admin only
