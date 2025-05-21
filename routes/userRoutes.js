@@ -38,6 +38,8 @@ router.put('/profile', protect, upload.single('profilePic'), userController.upda
 router.post('/pin', protect, userController.updatePin);
 router.post('/verify-pin', protect, userController.verifyPin);
 router.get('/check-pin-status', protect, userController.checkPinStatus);
+router.post('/forget-pin', protect, userController.resetForgottenPin);
+
 
 // Verification routes
 router.post('/verification/submit', 

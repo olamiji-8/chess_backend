@@ -607,6 +607,40 @@ exports.verifyPin = asyncHandler(async (req, res) => {
   });
 });
 
+exports.resetForgottenPin = asyncHandler(async (req, res) => {
+  const { newPin, confirmPin } = req.body;
+  const userId = req.user.id;
+
+  // Validate the new PIN
+  if (!newPin || newPin.length !== 4 || !/^\d{4}$/.test(newPin)) {
+    return res.status(400).json({ message: 'PIN must be exactly 4 digits' });
+  }
+
+  // Confirm PIN match
+  if (newPin !== confirmPin) {
+    return res.status(400).json({ message: 'PINs do not match' });
+  }
+
+  // Find the user
+  const user = await User.findById(userId);
+  if (!user) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+
+  // Update the PIN directly (no verification of old PIN)
+  const salt = await bcrypt.genSalt(10);
+  user.pin = await bcrypt.hash(newPin, salt);
+  
+  // Ensure hasPin flag is set
+  user.hasPin = true;
+  
+  await user.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'PIN has been reset successfully'
+  });
+});
 
 // @desc    Check if user needs to set a PIN
 // @route   GET /api/users/check-pin-status
@@ -629,6 +663,9 @@ exports.checkPinStatus = asyncHandler(async (req, res) => {
     message: isDefaultPin ? 'Please set your transaction PIN' : 'PIN already configured'
   });
 });
+
+
+
 
 // @desc    Submit verification request with enhanced options
 // @route   POST /api/users/verification/submit
