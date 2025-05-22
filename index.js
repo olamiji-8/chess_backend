@@ -99,6 +99,8 @@ const verificationRoutes = require('./routes/verificationRoutes');
 const puzzleRoutes = require('./routes/puzzleRoutes');
 // const adminPuzzleRoutes = require('./routes/adminPuzzleRoutes');
 const adminDashboard = require('./routes/adminDashboard');
+const notification = require('./routes/notificationRoutes');
+
 
 // Routes
 app.use('/api/tournaments', tournamentRoutes);
@@ -113,6 +115,7 @@ app.use('/api/users', userRoute);
 app.use('/api/puzzles', puzzleRoute);
 app.use('/api/games', gameRoutes);
 // app.use('/api/admin/puzzles', adminPuzzleRoutes);
+app.use('/api/notifications', notification);
 
 // JWT Authentication debug endpoint
 app.get('/api/auth-status', (req, res) => {

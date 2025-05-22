@@ -381,13 +381,45 @@ exports.updateUserProfile = asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'User not found' });
   }
   
-  // Update user fields from form data
-  user.fullName = req.body.fullName || user.fullName;
-  user.email = req.body.email || user.email;
-  user.phoneNumber = req.body.phoneNumber || user.phoneNumber;
+  // Debug logging
+  console.log('=== DEBUG UPDATE PROFILE ===');
+  console.log('Request body:', req.body);
+  console.log('Request file:', req.file);
+  console.log('Current user data:', {
+    fullName: user.fullName,
+    email: user.email,
+    phoneNumber: user.phoneNumber
+  });
   
+  // Update user fields - allow empty strings but check for undefined
+  if (req.body.fullName !== undefined) {
+    console.log('Updating fullName from:', user.fullName, 'to:', req.body.fullName);
+    user.fullName = req.body.fullName;
+  }
+  
+  if (req.body.email !== undefined) {
+    // Validate email format if provided
+    if (req.body.email && !/\S+@\S+\.\S+/.test(req.body.email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid email format'
+      });
+    }
+    console.log('Updating email from:', user.email, 'to:', req.body.email);
+    user.email = req.body.email;
+  }
+  
+  if (req.body.phoneNumber !== undefined) {
+    console.log('Updating phoneNumber from:', user.phoneNumber, 'to:', req.body.phoneNumber);
+    user.phoneNumber = req.body.phoneNumber;
+  }
+  
+  // Handle password update with proper hashing
   if (req.body.password) {
-    user.password = req.body.password;
+    // Assuming you're using bcrypt for password hashing
+    const bcrypt = require('bcrypt');
+    const saltRounds = 10;
+    user.password = await bcrypt.hash(req.body.password, saltRounds);
   }
   
   // Handle profile image update
@@ -419,14 +451,25 @@ exports.updateUserProfile = asyncHandler(async (req, res) => {
       fs.unlinkSync(req.file.path);
     } catch (error) {
       console.error('Error uploading profile pic:', error);
-      // If Cloudinary upload fails, use local file path as fallback
-      if (req.file.path) {
-        user.profilePic = req.file.filename;
-      }
+      return res.status(400).json({
+        success: false,
+        message: 'Error uploading profile image'
+      });
     }
-  } else if (req.body.profilePic) {
+  } else if (req.body.profilePic !== undefined) {
     // Case 2: String URL or base64 handling
-    if (req.body.profilePic === "null" || req.body.profilePic === "default") {
+    if (req.body.profilePic === "null" || req.body.profilePic === "default" || req.body.profilePic === "") {
+      // Delete current image if it's not default
+      if (user.profilePic && user.profilePic !== 'default-profile.jpg' && user.profilePic.includes('cloudinary')) {
+        try {
+          const publicId = user.profilePic.split('/').pop().split('.')[0];
+          if (publicId) {
+            await cloudinary.uploader.destroy(`profile_pics/${publicId}`);
+          }
+        } catch (error) {
+          console.error('Error deleting old profile pic:', error);
+        }
+      }
       // Reset to default profile pic
       user.profilePic = 'default-profile.jpg';
     } else if (req.body.profilePic.startsWith('http')) {
@@ -461,72 +504,154 @@ exports.updateUserProfile = asyncHandler(async (req, res) => {
         });
       }
     }
-    // If profilePic is something else, ignore it
   }
   
-  // Handle bank details from form data
-  if (req.body.accountNumber && req.body.bankCode && req.body.accountName) {
-    try {
-      // Verify with Paystack before saving
-      const bankResponse = await axios.get('https://api.paystack.co/bank', {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
-        }
-      });
-      
-      // Find bank name from bank code
-      const bank = bankResponse.data.data.find(b => b.code === req.body.bankCode);
-      
-      if (!bank) {
-        return res.status(400).json({ 
-          success: false,
-          message: 'Invalid bank code provided' 
+  // Handle bank details - check if we're updating or clearing
+  console.log('Bank details in request:', req.body.bankDetails);
+  
+  // Check if bank details are provided in nested object format
+  let bankAccountNumber, bankCode, bankAccountName;
+  
+  if (req.body.bankDetails && typeof req.body.bankDetails === 'object') {
+    // Bank details sent as nested object
+    bankAccountNumber = req.body.bankDetails.accountNumber;
+    bankCode = req.body.bankDetails.bankCode;
+    bankAccountName = req.body.bankDetails.accountName;
+  } else {
+    // Bank details sent as flat fields
+    bankAccountNumber = req.body.accountNumber;
+    bankCode = req.body.bankCode;
+    bankAccountName = req.body.accountName;
+  }
+  
+  console.log('Extracted bank details:', { bankAccountNumber, bankCode, bankAccountName });
+  
+  // Check if any bank field is provided
+  const bankFieldsProvided = [bankAccountNumber, bankCode, bankAccountName].filter(field => field !== undefined);
+  
+  if (bankFieldsProvided.length > 0) {
+    // If any bank field is provided, we need all of them (unless clearing)
+    const allBankFieldsEmpty = [bankAccountNumber, bankCode, bankAccountName].every(field => !field || field.toString().trim() === '');
+    
+    if (allBankFieldsEmpty) {
+      // Clear bank details
+      console.log('Clearing bank details');
+      user.bankDetails = undefined;
+    } else if (bankAccountNumber && bankCode && bankAccountName) {
+      // All required fields provided, validate and save
+      try {
+        console.log('Validating bank details with Paystack...');
+        // Verify with Paystack before saving
+        const bankResponse = await axios.get('https://api.paystack.co/bank', {
+          headers: {
+            Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+          }
         });
+        
+        // Find bank name from bank code
+        const bank = bankResponse.data.data.find(b => b.code === bankCode);
+        
+        if (!bank) {
+          return res.status(400).json({ 
+            success: false,
+            message: 'Invalid bank code provided' 
+          });
+        }
+        
+        console.log('Bank validated:', bank.name);
+        
+        // Save bank details with bank name
+        user.bankDetails = {
+          accountNumber: bankAccountNumber.toString().trim(),
+          accountName: bankAccountName.toString().trim(),
+          bankCode: bankCode,
+          bankName: bank.name,
+          verified: true
+        };
+        
+        console.log('Bank details updated:', user.bankDetails);
+        
+      } catch (error) {
+        console.error('Error verifying bank:', error);
+        // If verification fails, still save but mark as unverified
+        user.bankDetails = {
+          accountNumber: bankAccountNumber.toString().trim(),
+          accountName: bankAccountName.toString().trim(),
+          bankCode: bankCode,
+          verified: false
+        };
+        console.log('Bank details saved without verification:', user.bankDetails);
       }
-      
-      // Save bank details with bank name
-      user.bankDetails = {
-        accountNumber: req.body.accountNumber,
-        accountName: req.body.accountName,
-        bankCode: req.body.bankCode,
-        bankName: bank.name
-      };
-      
-    } catch (error) {
-      console.error('Error verifying bank:', error);
-      // If verification fails, still update but add a note
-      user.bankDetails = {
-        accountNumber: req.body.accountNumber,
-        accountName: req.body.accountName,
-        bankCode: req.body.bankCode,
-        verified: false
-      };
+    } else {
+      // Partial bank details provided
+      return res.status(400).json({
+        success: false,
+        message: 'Bank details must include all fields: accountNumber, bankCode, and accountName, or leave all empty to clear'
+      });
     }
-  } else if (req.body.accountNumber || req.body.bankCode || req.body.accountName) {
-    // If any bank field is provided but not all required fields
-    return res.status(400).json({
-      success: false,
-      message: 'Bank details must include accountNumber, bankCode, and accountName'
-    });
+  } else if (req.body.bankDetails !== undefined || req.body.accountNumber !== undefined) {
+    // Bank details field was sent but is empty/null - clear existing bank details
+    console.log('Clearing bank details (empty object sent)');
+    user.bankDetails = undefined;
   }
   
-  const updatedUser = await user.save();
-  
-  res.status(200).json({
-    success: true,
-    data: {
-      id: updatedUser._id,
+  try {
+    console.log('About to save user with data:', {
+      fullName: user.fullName,
+      email: user.email,
+      phoneNumber: user.phoneNumber
+    });
+    
+    const updatedUser = await user.save();
+    
+    console.log('User saved successfully:', {
       fullName: updatedUser.fullName,
       email: updatedUser.email,
-      profilePic: updatedUser.profilePic,
-      phoneNumber: updatedUser.phoneNumber,
-      lichessUsername: updatedUser.lichessUsername,
-      isVerified: updatedUser.isVerified,
-      walletBalance: updatedUser.walletBalance,
-      bankDetails: updatedUser.bankDetails
-    },
-    message: 'Profile updated successfully'
-  });
+      phoneNumber: updatedUser.phoneNumber
+    });
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        id: updatedUser._id,
+        fullName: updatedUser.fullName,
+        email: updatedUser.email,
+        profilePic: updatedUser.profilePic,
+        phoneNumber: updatedUser.phoneNumber,
+        lichessUsername: updatedUser.lichessUsername,
+        isVerified: updatedUser.isVerified,
+        walletBalance: updatedUser.walletBalance,
+        bankDetails: updatedUser.bankDetails
+      },
+      message: 'Profile updated successfully'
+    });
+  } catch (error) {
+    console.error('Error saving user:', error);
+    
+    // Handle specific MongoDB validation errors
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: errors
+      });
+    }
+    
+    // Handle duplicate key errors (like email already exists)
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      return res.status(400).json({
+        success: false,
+        message: `${field} already exists`
+      });
+    }
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Error updating profile'
+    });
+  }
 });
 
 // @desc    Create or update PIN
