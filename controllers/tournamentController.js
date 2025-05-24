@@ -10,7 +10,7 @@
   // @route   POST /api/tournaments
   // @access  Private
   // Enhanced createTournament controller with improved error handling
-  exports.createTournament = asyncHandler(async (req, res) => {
+ exports.createTournament = asyncHandler(async (req, res) => {
     try {
       console.log('Request body:', JSON.stringify(req.body, null, 2));
       
@@ -76,11 +76,11 @@
       if (prizeType === 'fixed') {
         normalizedPrizes = {
           fixed: {
-            first: 0,
-            second: 0,
-            third: 0,
-            fourth: 0,
-            fifth: 0,
+            '1st': 0,
+            '2nd': 0,
+            '3rd': 0,
+            '4th': 0,
+            '5th': 0,
             additional: []
           }
         };
@@ -90,11 +90,11 @@
           console.log('Prizes fixed object:', JSON.stringify(prizes.fixed));
           
           // Parse numeric values from the prizes.fixed object
-          if (prizes.fixed.first) normalizedPrizes.fixed.first = parseFloat(prizes.fixed.first) || 0;
-          if (prizes.fixed.second) normalizedPrizes.fixed.second = parseFloat(prizes.fixed.second) || 0;
-          if (prizes.fixed.third) normalizedPrizes.fixed.third = parseFloat(prizes.fixed.third) || 0;
-          if (prizes.fixed.fourth) normalizedPrizes.fixed.fourth = parseFloat(prizes.fixed.fourth) || 0;
-          if (prizes.fixed.fifth) normalizedPrizes.fixed.fifth = parseFloat(prizes.fixed.fifth) || 0;
+          if (prizes.fixed['1st']) normalizedPrizes.fixed['1st'] = parseFloat(prizes.fixed['1st']) || 0;
+          if (prizes.fixed['2nd']) normalizedPrizes.fixed['2nd'] = parseFloat(prizes.fixed['2nd']) || 0;
+          if (prizes.fixed['3rd']) normalizedPrizes.fixed['3rd'] = parseFloat(prizes.fixed['3rd']) || 0;
+          if (prizes.fixed['4th']) normalizedPrizes.fixed['4th'] = parseFloat(prizes.fixed['4th']) || 0;
+          if (prizes.fixed['5th']) normalizedPrizes.fixed['5th'] = parseFloat(prizes.fixed['5th']) || 0;
           
           // Handle additional prizes if they exist
           if (prizes.fixed.additional && Array.isArray(prizes.fixed.additional)) {
@@ -110,11 +110,11 @@
         normalizedPrizes = {
           percentage: {
             basePrizePool: 0,
-            first: 0,
-            second: 0,
-            third: 0,
-            fourth: 0,
-            fifth: 0,
+            '1st': 0,
+            '2nd': 0,
+            '3rd': 0,
+            '4th': 0,
+            '5th': 0,
             additional: []
           }
         };
@@ -122,11 +122,11 @@
         // Similar parsing for percentage prizes
         if (prizes && prizes.percentage && typeof prizes.percentage === 'object') {
           if (prizes.percentage.basePrizePool) normalizedPrizes.percentage.basePrizePool = parseFloat(prizes.percentage.basePrizePool) || 0;
-          if (prizes.percentage.first) normalizedPrizes.percentage.first = parseFloat(prizes.percentage.first) || 0;
-          if (prizes.percentage.second) normalizedPrizes.percentage.second = parseFloat(prizes.percentage.second) || 0;
-          if (prizes.percentage.third) normalizedPrizes.percentage.third = parseFloat(prizes.percentage.third) || 0;
-          if (prizes.percentage.fourth) normalizedPrizes.percentage.fourth = parseFloat(prizes.percentage.fourth) || 0;
-          if (prizes.percentage.fifth) normalizedPrizes.percentage.fifth = parseFloat(prizes.percentage.fifth) || 0;
+          if (prizes.percentage['1st']) normalizedPrizes.percentage['1st'] = parseFloat(prizes.percentage['1st']) || 0;
+          if (prizes.percentage['2nd']) normalizedPrizes.percentage['2nd'] = parseFloat(prizes.percentage['2nd']) || 0;
+          if (prizes.percentage['3rd']) normalizedPrizes.percentage['3rd'] = parseFloat(prizes.percentage['3rd']) || 0;
+          if (prizes.percentage['4th']) normalizedPrizes.percentage['4th'] = parseFloat(prizes.percentage['4th']) || 0;
+          if (prizes.percentage['5th']) normalizedPrizes.percentage['5th'] = parseFloat(prizes.percentage['5th']) || 0;
           
           if (prizes.percentage.additional && Array.isArray(prizes.percentage.additional)) {
             normalizedPrizes.percentage.additional = prizes.percentage.additional.map(prize => ({
@@ -165,11 +165,11 @@
       try {
         if (prizeType === 'fixed') {
           // Sum all fixed prizes
-          totalPrizePool = normalizedPrizes.fixed.first + 
-                          normalizedPrizes.fixed.second + 
-                          normalizedPrizes.fixed.third + 
-                          normalizedPrizes.fixed.fourth + 
-                          normalizedPrizes.fixed.fifth;
+          totalPrizePool = normalizedPrizes.fixed['1st'] + 
+                          normalizedPrizes.fixed['2nd'] + 
+                          normalizedPrizes.fixed['3rd'] + 
+                          normalizedPrizes.fixed['4th'] + 
+                          normalizedPrizes.fixed['5th'];
                           
           // Add additional prizes if any
           if (normalizedPrizes.fixed.additional && normalizedPrizes.fixed.additional.length) {
@@ -323,7 +323,6 @@
       });
     }
   });
-
   
 // @desc    Get all tournaments with pagination and filters
 // @route   GET /api/tournaments
