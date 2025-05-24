@@ -38,20 +38,20 @@ const TournamentSchema = new mongoose.Schema({
   },
   prizes: {
     fixed: {
-      '1st': { type: Number },
-      '2nd': { type: Number },
-      '3rd': { type: Number },
-      '4th': { type: Number },
-      '5th': { type: Number },
+      '1st': { type: Number, default: 0 },
+      '2nd': { type: Number, default: 0 },
+      '3rd': { type: Number, default: 0 },
+      '4th': { type: Number, default: 0 },
+      '5th': { type: Number, default: 0 },
       additional: [{ position: Number, amount: Number }]
     },
     percentage: {
       basePrizePool: { type: Number },
-      '1st': { type: Number }, // Percentage
-      '2nd': { type: Number }, 
-      '3rd': { type: Number },
-      '4th': { type: Number },
-      '5th': { type: Number },
+      '1st': { type: Number, default: 0 }, // Percentage
+      '2nd': { type: Number, default: 0 }, 
+      '3rd': { type: Number, default: 0 },
+      '4th': { type: Number, default: 0 },
+      '5th': { type: Number, default: 0 },
       additional: [{ position: Number, percentage: Number }]
     },
     special: {

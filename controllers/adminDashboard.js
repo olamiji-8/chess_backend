@@ -1173,7 +1173,7 @@ exports.getAllTournaments = async (req, res) => {
    * @route   GET /api/admin/tournaments/:tournamentId
    * @access  Admin only
    */
-  exports.getTournamentById = async (req, res) => {
+exports.getTournamentById = async (req, res) => {
     try {
       const tournamentId = req.params.tournamentId;
   
@@ -1200,11 +1200,70 @@ exports.getAllTournaments = async (req, res) => {
         tournament: tournamentId
       }).populate('user', 'fullName email lichessUsername').lean();
   
+      // Calculate category counts for all tournaments
+      const categoryStats = await Tournament.aggregate([
+        {
+          $group: {
+            _id: "$category",
+            count: { $sum: 1 }
+          }
+        },
+        {
+          $sort: { count: -1 }
+        }
+      ]);
+  
+      // Format category stats into an object for easier access
+      const categoryCounts = {};
+      categoryStats.forEach(stat => {
+        categoryCounts[stat._id] = stat.count;
+      });
+  
+      // Get current tournament's category count
+      const currentCategoryCount = categoryCounts[tournament.category] || 0;
+  
+      // Calculate additional tournament details
+      const tournamentDetails = {
+        participantCount: tournament.participants.length,
+        maxParticipants: tournament.maxParticipants || null,
+        registrationDeadline: tournament.registrationDeadline || null,
+        isRegistrationOpen: tournament.status === 'upcoming' && 
+                           (!tournament.registrationDeadline || 
+                            new Date() < new Date(tournament.registrationDeadline)),
+        timeUntilStart: tournament.startDate > new Date() ? 
+                       Math.ceil((new Date(tournament.startDate) - new Date()) / (1000 * 60 * 60 * 24)) : 0,
+        durationInHours: tournament.duration / (1000 * 60 * 60),
+        totalPrizePool: calculateTotalPrizePool(tournament.prizes, tournament.prizeType),
+        hasPassword: !!tournament.password,
+        entriesReceived: transactions.filter(t => t.type === 'entry_fee').length,
+        totalFunding: transactions
+          .filter(t => t.type === 'tournament_funding' && t.status === 'completed')
+          .reduce((sum, t) => sum + t.amount, 0),
+        // Add category information directly to tournament details
+        category: tournament.category,
+        categoryCount: currentCategoryCount
+      };
+  
       res.status(200).json({
         success: true,
         data: {
           tournament,
-          transactions
+          transactions,
+          // Enhanced category statistics
+          categoryStats: {
+            allCategories: categoryCounts,
+            currentCategory: tournament.category,
+            currentCategoryCount: currentCategoryCount,
+            totalTournaments: Object.values(categoryCounts).reduce((sum, count) => sum + count, 0),
+            categoryBreakdown: categoryStats.map(stat => ({
+              category: stat._id,
+              count: stat.count
+            }))
+          },
+          details: tournamentDetails,
+          // Also include category info at root level for easy access
+          category: tournament.category,
+          count: currentCategoryCount
         }
       });
     } catch (error) {
@@ -1215,7 +1274,43 @@ exports.getAllTournaments = async (req, res) => {
         error: error.message
       });
     }
-  };
+};
+
+// Helper function to calculate total prize pool
+function calculateTotalPrizePool(prizes, prizeType) {
+  let totalPrizePool = 0;
+  
+  try {
+    if (prizeType === 'fixed' && prizes.fixed) {
+      totalPrizePool = (prizes.fixed['1st'] || 0) + 
+                      (prizes.fixed['2nd'] || 0) + 
+                      (prizes.fixed['3rd'] || 0) + 
+                      (prizes.fixed['4th'] || 0) + 
+                      (prizes.fixed['5th'] || 0);
+                      
+      // Add additional prizes if any
+      if (prizes.fixed.additional && prizes.fixed.additional.length) {
+        totalPrizePool += prizes.fixed.additional.reduce((sum, prize) => sum + (prize.amount || 0), 0);
+      }
+    } else if (prizeType === 'percentage' && prizes.percentage) {
+      // For percentage, we use the base prize pool
+      totalPrizePool = prizes.percentage.basePrizePool || 0;
+    } else if (prizeType === 'special' && prizes.special) {
+      if (prizes.special.isFixed) {
+        // Calculate total from special prizes
+        totalPrizePool = prizes.special.specialPrizes.reduce((sum, prize) => sum + (prize.amount || 0), 0);
+      } else {
+        // For percentage-based special prizes, use the base prize pool
+        totalPrizePool = prizes.special.basePrizePool || 0;
+      }
+    }
+  } catch (error) {
+    console.error('Error calculating prize pool:', error);
+    totalPrizePool = 0;
+  }
+  
+  return totalPrizePool;
+}
   
   /**
    * @desc    Delete tournament and refund participants
