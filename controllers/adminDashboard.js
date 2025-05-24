@@ -2448,80 +2448,199 @@ exports.getAllPlayers = async (req, res) => {
    * @route   GET /api/admin/players/:userId
    * @access  Private/Admin
    */
-  exports.getPlayerDetails = async (req, res) => {
-    try {
-      const userId = req.params.userId;
-  
-      if (!mongoose.Types.ObjectId.isValid(userId)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid user ID'
-        });
-      }
-  
-      const user = await User.findById(userId).lean();
-  
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: 'User not found'
-        });
-      }
-  
-      // Get created tournaments
-      const createdTournaments = await Tournament.find({
-        organizer: userId
-      }).select('title startDate status participants category').lean();
-  
-      // Get registered tournaments
-      const registeredTournaments = await Tournament.find({
-        participants: userId
-      }).select('title startDate status category').lean();
-  
-      // Get transaction history
-      const transactions = await Transaction.find({
-        user: userId
-      }).sort({ createdAt: -1 }).lean();
-  
-      // Get verification status history
-      const verificationHistory = await VerificationRequest.find({
-        user: userId
-      }).sort({ updatedAt: -1 }).lean();
-  
-      res.status(200).json({
-        success: true,
-        data: {
-          user: {
-            _id: user._id,
-            fullName: user.fullName,
-            email: user.email,
-            profilePic: user.profilePic,
-            lichessUsername: user.lichessUsername,
-            phoneNumber: user.phoneNumber,
-            isVerified: user.isVerified,
-            walletBalance: user.walletBalance,
-            createdAt: user.createdAt,
-            bankDetails: user.bankDetails || {}
-          },
-          stats: {
-            createdTournaments: createdTournaments,
-            registeredTournaments: registeredTournaments,
-            totalCreated: createdTournaments.length,
-            totalRegistered: registeredTournaments.length
-          },
-          transactions: transactions,
-          verificationHistory: verificationHistory
-        }
-      });
-    } catch (error) {
-      console.error('Error fetching player details:', error);
-      res.status(500).json({
+exports.getPlayerDetails = async (req, res) => {
+  try {
+    const userId = req.params.userId;
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
         success: false,
-        message: 'Error fetching player details',
-        error: error.message
+        message: 'Invalid user ID'
       });
     }
-  };
+
+    const user = await User.findById(userId).lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Get created tournaments with category aggregation
+    const createdTournamentsAggregation = await Tournament.aggregate([
+      { $match: { organizer: new mongoose.Types.ObjectId(userId) } },
+      {
+        $facet: {
+          tournaments: [
+            {
+              $project: {
+                title: 1,
+                startDate: 1,
+                status: 1,
+                participants: 1,
+                category: 1,
+                participantCount: { $size: '$participants' }
+              }
+            },
+            { $sort: { startDate: -1 } }
+          ],
+          categoryStats: [
+            {
+              $group: {
+                _id: '$category',
+                count: { $sum: 1 },
+                totalParticipants: { $sum: { $size: '$participants' } }
+              }
+            }
+          ]
+        }
+      }
+    ]);
+
+    // Get registered tournaments with category aggregation
+    const registeredTournamentsAggregation = await Tournament.aggregate([
+      { $match: { participants: new mongoose.Types.ObjectId(userId) } },
+      {
+        $facet: {
+          tournaments: [
+            {
+              $project: {
+                title: 1,
+                startDate: 1,
+                status: 1,
+                category: 1,
+                organizer: 1
+              }
+            },
+            { $sort: { startDate: -1 } }
+          ],
+          categoryStats: [
+            {
+              $group: {
+                _id: '$category',
+                count: { $sum: 1 }
+              }
+            }
+          ]
+        }
+      }
+    ]);
+
+    // Extract results
+    const createdTournaments = createdTournamentsAggregation[0]?.tournaments || [];
+    const createdCategoryStats = createdTournamentsAggregation[0]?.categoryStats || [];
+    
+    const registeredTournaments = registeredTournamentsAggregation[0]?.tournaments || [];
+    const registeredCategoryStats = registeredTournamentsAggregation[0]?.categoryStats || [];
+
+    // Process category statistics for created tournaments
+    const createdCategoryBreakdown = {
+      bullet: 0,
+      blitz: 0,
+      rapid: 0,
+      classical: 0
+    };
+
+    const createdCategoryDetails = {
+      bullet: { count: 0, totalParticipants: 0 },
+      blitz: { count: 0, totalParticipants: 0 },
+      rapid: { count: 0, totalParticipants: 0 },
+      classical: { count: 0, totalParticipants: 0 }
+    };
+
+    createdCategoryStats.forEach(stat => {
+      if (createdCategoryBreakdown.hasOwnProperty(stat._id)) {
+        createdCategoryBreakdown[stat._id] = stat.count;
+        createdCategoryDetails[stat._id] = {
+          count: stat.count,
+          totalParticipants: stat.totalParticipants || 0
+        };
+      }
+    });
+
+    // Process category statistics for registered tournaments
+    const registeredCategoryBreakdown = {
+      bullet: 0,
+      blitz: 0,
+      rapid: 0,
+      classical: 0
+    };
+
+    registeredCategoryStats.forEach(stat => {
+      if (registeredCategoryBreakdown.hasOwnProperty(stat._id)) {
+        registeredCategoryBreakdown[stat._id] = stat.count;
+      }
+    });
+
+    // Get transaction history
+    const transactions = await Transaction.find({
+      user: userId
+    }).sort({ createdAt: -1 }).lean();
+
+    // Get verification status history
+    const verificationHistory = await VerificationRequest.find({
+      user: userId
+    }).sort({ updatedAt: -1 }).lean();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        user: {
+          _id: user._id,
+          fullName: user.fullName,
+          email: user.email,
+          profilePic: user.profilePic,
+          lichessUsername: user.lichessUsername,
+          phoneNumber: user.phoneNumber,
+          isVerified: user.isVerified,
+          walletBalance: user.walletBalance,
+          createdAt: user.createdAt,
+          bankDetails: user.bankDetails || {}
+        },
+        stats: {
+          createdTournaments: {
+            tournaments: createdTournaments,
+            total: createdTournaments.length,
+            categoryBreakdown: createdCategoryBreakdown,
+            categoryDetails: createdCategoryDetails
+          },
+          registeredTournaments: {
+            tournaments: registeredTournaments,
+            total: registeredTournaments.length,
+            categoryBreakdown: registeredCategoryBreakdown
+          },
+          // Legacy fields for backward compatibility
+          totalCreated: createdTournaments.length,
+          totalRegistered: registeredTournaments.length
+        },
+        categoryStats: {
+          created: {
+            summary: createdCategoryBreakdown,
+            details: createdCategoryDetails,
+            mostActive: Object.entries(createdCategoryBreakdown)
+              .sort(([,a], [,b]) => b - a)[0]?.[0] || null
+          },
+          registered: {
+            summary: registeredCategoryBreakdown,
+            mostPlayed: Object.entries(registeredCategoryBreakdown)
+              .sort(([,a], [,b]) => b - a)[0]?.[0] || null
+          }
+        },
+        transactions: transactions,
+        verificationHistory: verificationHistory
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching player details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching player details',
+      error: error.message
+    });
+  }
+};
   
   /**
    * @desc    Download player data
