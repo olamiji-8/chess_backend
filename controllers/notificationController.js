@@ -46,6 +46,20 @@ exports.createBulkNotifications = async (userIds, title, message, type, relatedI
   }
 };
 
+// ==================== USER ACCOUNT NOTIFICATIONS ====================
+
+// Welcome notification when user creates account
+exports.notifyUserWelcome = async (userId, userName) => {
+  return await exports.createNotification(
+    userId,
+    'Welcome to 64SQURS',
+    `Hello ${userName}! Welcome to 64SQURS, your premier chess tournament platform. Get ready to compete, improve your skills, and win exciting prizes. Start by exploring tournaments or creating your own!`,
+    'system_message',
+    userId,
+    'User'
+  );
+};
+
 // ==================== VERIFICATION NOTIFICATIONS ====================
 
 // Notify user when verification request is submitted
@@ -123,7 +137,7 @@ exports.notifyTournamentRegistration = async (userId, tournamentId, tournamentTi
   return await exports.createNotification(
     userId,
     'Tournament Registration Confirmed',
-    `You have successfully registered for "${tournamentTitle}". Good luck!`,
+    `You have successfully registered for "${tournamentTitle}". Good luck and may the best player win!`,
     'tournament_registration',
     tournamentId,
     'Tournament'
@@ -142,7 +156,29 @@ exports.notifyOrganizerNewRegistration = async (organizerId, tournamentId, tourn
   );
 };
 
-// Notify participants about tournament starting soon (reminder)
+// Notify participants about tournament starting in 5 minutes
+exports.notifyTournamentStartingInFiveMinutes = async (tournamentId) => {
+  try {
+    const tournament = await Tournament.findById(tournamentId).populate('participants', '_id');
+    if (!tournament) return null;
+    
+    const participantIds = tournament.participants.map(p => p._id);
+    
+    return await exports.createBulkNotifications(
+      participantIds,
+      `${tournament.title} is starting in 5 minutes!`,
+      `Get ready! "${tournament.title}" is starting in 5 minutes. Make sure you're prepared and ready to compete. Join the tournament using your tournament link.`,
+      'tournament_reminder',
+      tournamentId,
+      'Tournament'
+    );
+  } catch (error) {
+    console.error('Error sending 5-minute tournament notification:', error);
+    return null;
+  }
+};
+
+// Notify participants about tournament starting soon (general reminder)
 exports.notifyTournamentReminder = async (tournamentId, hoursBeforeStart = 1) => {
   try {
     const tournament = await Tournament.findById(tournamentId).populate('participants', '_id');
@@ -206,6 +242,38 @@ exports.notifyTournamentCompleted = async (tournamentId) => {
     console.error('Error notifying tournament completion:', error);
     return null;
   }
+};
+
+// Notify tournament winner(s) - NEW FUNCTION
+exports.notifyTournamentWinner = async (userId, tournamentId, tournamentTitle, position, prizeAmount = null) => {
+  let message;
+  let title;
+  
+  if (position === 1) {
+    title = 'Congratulations! You Won!';
+    message = `🎉 Congratulations! You won "${tournamentTitle}"! You are the champion!`;
+  } else if (position <= 3) {
+    const positionText = position === 2 ? '2nd' : '3rd';
+    title = `Congratulations! You Placed ${positionText}!`;
+    message = `🎉 Congratulations! You finished in ${positionText} place in "${tournamentTitle}"! Excellent performance!`;
+  } else {
+    const positionText = position === 4 ? '4th' : position === 5 ? '5th' : `${position}th`;
+    title = `Great Job! You Placed ${positionText}!`;
+    message = `🎉 Congratulations! You finished in ${positionText} place in "${tournamentTitle}"! Well played!`;
+  }
+  
+  if (prizeAmount && prizeAmount > 0) {
+    message += ` You've earned ₦${prizeAmount.toLocaleString()} as your prize!`;
+  }
+  
+  return await exports.createNotification(
+    userId,
+    title,
+    message,
+    'tournament_result',
+    tournamentId,
+    'Tournament'
+  );
 };
 
 // Notify tournament cancellation
@@ -492,6 +560,33 @@ exports.getNotificationStats = asyncHandler(async (req, res) => {
 });
 
 // ==================== SCHEDULED NOTIFICATION HELPERS ====================
+
+// Function to send 5-minute tournament reminders (to be called by a cron job)
+exports.sendFiveMinuteTournamentReminders = async () => {
+  try {
+    const now = new Date();
+    const fiveMinutesFromNow = new Date(now.getTime() + 5 * 60 * 1000);
+    const tenMinutesFromNow = new Date(now.getTime() + 10 * 60 * 1000);
+    
+    // Find tournaments starting in the next 5-10 minutes (to catch them in the right window)
+    const upcomingTournaments = await Tournament.find({
+      startDate: {
+        $gte: fiveMinutesFromNow,
+        $lte: tenMinutesFromNow
+      },
+      status: 'upcoming'
+    });
+    
+    const reminderPromises = upcomingTournaments.map(tournament => 
+      exports.notifyTournamentStartingInFiveMinutes(tournament._id)
+    );
+    
+    await Promise.all(reminderPromises);
+    console.log(`Sent 5-minute reminders for ${upcomingTournaments.length} tournaments`);
+  } catch (error) {
+    console.error('Error sending 5-minute tournament reminders:', error);
+  }
+};
 
 // Function to send tournament reminders (to be called by a cron job)
 exports.sendScheduledTournamentReminders = async () => {

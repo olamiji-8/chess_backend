@@ -633,70 +633,64 @@ exports.initiateWithdrawal = asyncHandler(async (req, res) => {
       return res.status(403).json({ message: 'Account verification is required before making withdrawals. Please verify your account first.' });
     }
     
+    // Check for existing pending withdrawals
+    const existingPendingWithdrawal = await Transaction.findOne({
+      user: userId,
+      type: 'withdrawal',
+      status: 'pending'
+    });
+    
+    if (existingPendingWithdrawal) {
+      return res.status(400).json({ 
+        message: 'You already have a pending withdrawal request. Please wait for approval before making another request.',
+        pendingAmount: existingPendingWithdrawal.amount,
+        reference: existingPendingWithdrawal.reference
+      });
+    }
+    
     // Generate reference
     const reference = 'CHESS_WD_' + crypto.randomBytes(8).toString('hex');
     
-    // Create transaction record
+    // Create transaction record (PENDING - money stays in wallet)
     const transaction = await Transaction.create({
       user: userId,
       type: 'withdrawal',
       amount,
       reference,
-      status: 'pending',
+      status: 'pending', // Status remains pending until admin approval
       paymentMethod: 'bank_transfer',
       details: {
         bankName: user.bankDetails.bankName,
         accountNumber: user.bankDetails.accountNumber,
-        accountName: user.bankDetails.accountName || user.fullName
+        accountName: user.bankDetails.accountName || user.fullName,
+        requestedAt: new Date()
       }
     });
     
-    // Deduct from wallet balance
-    user.walletBalance -= amount;
-    await user.save();
+    // DO NOT deduct from wallet balance yet - wait for admin approval
+    console.log(`Withdrawal request created: ${amount} naira for user ${userId}, reference: ${reference} - Awaiting admin approval`);
     
-    // Here we would implement Paystack transfer
-    try {
-      // For now, simulate a successful transfer request
-      console.log(`Withdrawal initiated: ${amount} naira for user ${userId}, reference: ${reference}`);
-      
-      res.status(200).json({
-        success: true,
-        message: 'Withdrawal request initiated successfully. Please allow 1-2 business days for processing.',
-        data: {
-          amount,
-          newBalance: user.walletBalance,
-          reference,
-          estimatedProcessingTime: '1-2 business days'
-        }
-      });
-    } catch (error) {
-      // If transfer request fails, refund the user and mark transaction as failed
-      user.walletBalance += amount;
-      await user.save();
-      
-      transaction.status = 'failed';
-      transaction.details = {
-        ...transaction.details,
-        failureReason: error.response ? error.response.data.message : error.message
-      };
-      await transaction.save();
-      
-      console.error('Withdrawal Error:', error.response ? error.response.data : error.message);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to process withdrawal. Your wallet has been refunded.'
-      });
-    }
+    res.status(200).json({
+      success: true,
+      message: 'Withdrawal request submitted successfully. Your request is pending admin approval.',
+      data: {
+        amount,
+        currentBalance: user.walletBalance, // Balance remains unchanged
+        reference,
+        status: 'pending',
+        estimatedProcessingTime: 'Pending admin approval, then 1-2 business days for processing'
+      }
+    });
+    
   } catch (error) {
-    console.error('Withdrawal Error:', {
+    console.error('Withdrawal Request Error:', {
       message: error.message,
       stack: error.stack,
       body: req.body
     });
     res.status(500).json({
       success: false,
-      message: 'An unexpected error occurred during withdrawal'
+      message: 'An unexpected error occurred while submitting withdrawal request'
     });
   }
 });
@@ -753,11 +747,33 @@ exports.getWalletBalance = asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'User not found' });
   }
   
+  // Also get pending withdrawal amount
+  const pendingWithdrawals = await Transaction.aggregate([
+    {
+      $match: {
+        user: userId,
+        type: 'withdrawal',
+        status: 'pending'
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        totalPending: { $sum: '$amount' }
+      }
+    }
+  ]);
+  
+  const pendingAmount = pendingWithdrawals.length > 0 ? pendingWithdrawals[0].totalPending : 0;
+  
   res.status(200).json({
     success: true,
-    walletBalance: user.walletBalance
+    walletBalance: user.walletBalance,
+    pendingWithdrawals: pendingAmount,
+    availableBalance: user.walletBalance // Available balance is same as wallet balance since money isn't deducted until approval
   });
 });
+
 
 // @desc    Create recipient for bank transfer
 // @route   POST /api/wallet/recipient
