@@ -2236,6 +2236,8 @@ exports.getAllPlayers = async (req, res) => {
     const skip = (page - 1) * limit;
     const filter = req.query.filter || 'all'; // 'all', 'verified', 'unverified', 'declined', 'registered', 'pending'
     const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'createdAt'; // field to sort by
+    const sortOrder = req.query.sortOrder || 'desc'; // 'asc' or 'desc'
 
     // Build match criteria
     const matchCriteria = { role: 'user' };
@@ -2278,10 +2280,34 @@ exports.getAllPlayers = async (req, res) => {
       ];
     }
 
+    // Build sort object
+    const buildSortObject = (sortBy, sortOrder) => {
+      const order = sortOrder === 'asc' ? 1 : -1;
+      
+      // Define valid sort fields and their mappings
+      const sortFields = {
+        'name': { fullName: order },
+        'fullName': { fullName: order },
+        'email': { email: order },
+        'createdAt': { createdAt: order },
+        'registeredTournaments': { registeredTournamentsCount: order },
+        'createdTournaments': { createdTournamentsCount: order },
+        'walletBalance': { walletBalance: order },
+        'lichessUsername': { lichessUsername: order },
+        'phoneNumber': { phoneNumber: order },
+        'verified': { isVerified: order }
+      };
+      
+      // Return the sort object or default to createdAt descending
+      return sortFields[sortBy] || { createdAt: -1 };
+    };
+
+    const sortObject = buildSortObject(sortBy, sortOrder);
+
     // Count total documents for pagination
     const totalDocs = await User.countDocuments(matchCriteria);
 
-    // Get players with pagination
+    // Get players with pagination and sorting
     const playersData = await User.aggregate([
       {
         $match: matchCriteria
@@ -2310,7 +2336,7 @@ exports.getAllPlayers = async (req, res) => {
         }
       },
       {
-        $sort: { createdAt: -1 }
+        $sort: sortObject
       },
       {
         $skip: skip
@@ -2387,6 +2413,15 @@ exports.getAllPlayers = async (req, res) => {
         page,
         limit,
         pages: Math.ceil(totalDocs / limit)
+      },
+      sorting: {
+        sortBy,
+        sortOrder,
+        availableFields: [
+          'name', 'fullName', 'email', 'createdAt', 
+          'registeredTournaments', 'createdTournaments', 
+          'walletBalance', 'lichessUsername', 'phoneNumber', 'verified'
+        ]
       },
       counts: {
         verified: verifiedCount,
