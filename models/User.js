@@ -28,16 +28,16 @@ const UserSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-lichessUsername: {
-  type: String,
-  trim: true,
-  sparse: true, 
-  index: true
-},
-lichessAccessToken: {
-  type: String,
-  select: false // hide in queries unless needed
-},
+  lichessUsername: {
+    type: String,
+    trim: true,
+    sparse: true, 
+    index: true
+  },
+  lichessAccessToken: {
+    type: String,
+    select: false // hide in queries unless needed
+  },
   isVerified: {
     type: Boolean,
     default: false
@@ -65,7 +65,6 @@ lichessAccessToken: {
     bankCode: String,
     bankName: String
   },
-  
   bankVerification: {
     code: String,
     createdAt: Date,
@@ -79,6 +78,92 @@ lichessAccessToken: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Tournament'
   }],
+  
+  // ==================== NOTIFICATION PREFERENCES ====================
+  // Global notification settings
+  emailNotifications: {
+    type: Boolean,
+    default: true
+  },
+  pushNotifications: {
+    type: Boolean,
+    default: true
+  },
+  
+  // Push notification subscription data
+  pushSubscription: {
+    endpoint: String,
+    keys: {
+      p256dh: String,
+      auth: String
+    }
+  },
+  
+  // Specific notification type preferences
+  notificationTypes: {
+    // Account related
+    welcome: {
+      type: Boolean,
+      default: true
+    },
+    verification: {
+      type: Boolean,
+      default: true
+    },
+    
+    // Tournament related
+    tournamentCreated: {
+      type: Boolean,
+      default: true
+    },
+    tournamentRegistration: {
+      type: Boolean,
+      default: true
+    },
+    tournamentReminder: {
+      type: Boolean,
+      default: true
+    },
+    tournamentStarting: {
+      type: Boolean,
+      default: true // 5-minute warning
+    },
+    tournamentResult: {
+      type: Boolean,
+      default: true
+    },
+    tournamentWinner: {
+      type: Boolean,
+      default: true
+    },
+    
+    // Transaction related
+    transactionSuccess: {
+      type: Boolean,
+      default: true
+    },
+    transactionFailed: {
+      type: Boolean,
+      default: true
+    },
+    
+    // Wallet related
+    walletUpdate: {
+      type: Boolean,
+      default: true
+    },
+    lowBalance: {
+      type: Boolean,
+      default: true
+    },
+    
+    // System messages
+    systemMessage: {
+      type: Boolean,
+      default: true
+    }
+  },
+  
   createdAt: {
     type: Date,
     default: Date.now
@@ -98,6 +183,22 @@ UserSchema.pre('save', async function(next) {
 // Method to compare passwords
 UserSchema.methods.matchPassword = async function(enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
+};
+
+// Method to check if user wants specific notification type
+UserSchema.methods.wantsNotification = function(notificationType) {
+  // Check global settings first
+  if (!this.emailNotifications && !this.pushNotifications) {
+    return false;
+  }
+  
+  // Check specific notification type preference
+  if (this.notificationTypes && this.notificationTypes[notificationType] !== undefined) {
+    return this.notificationTypes[notificationType];
+  }
+  
+  // Default to true if not specified
+  return true;
 };
 
 module.exports = mongoose.model('User', UserSchema);
