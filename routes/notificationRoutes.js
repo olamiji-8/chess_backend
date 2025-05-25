@@ -54,7 +54,8 @@ const {
   // Scheduled Functions
   sendFiveMinuteTournamentReminders,
   sendScheduledTournamentReminders,
-  cleanupOldNotifications
+  cleanupOldNotifications,
+  notifyWithdrawalSuccess
 } = require('../controllers/notificationController');
 
 // Import auth middleware
@@ -116,6 +117,9 @@ router.delete('/unsubscribe-push', unsubscribeFromPush);
 // @desc    Send test notification (for testing email and push)
 // @access  Private
 router.post('/test', sendTestNotification);
+
+
+router.post('/withdrawal-success', adminOnly,notifyWithdrawalSuccess)
 
 // ==================== ADMIN NOTIFICATION ROUTES ====================
 
@@ -190,6 +194,8 @@ router.post('/manual-reminder/:tournamentId', adminOnly, async (req, res) => {
 // @route   POST /api/notifications/manual-5min-reminder/:tournamentId
 // @desc    Manually send 5-minute tournament reminder (Admin only)
 // @access  Private/Admin
+
+
 router.post('/manual-5min-reminder/:tournamentId', adminOnly, async (req, res) => {
   try {
     const { tournamentId } = req.params;

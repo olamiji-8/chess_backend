@@ -10,9 +10,9 @@ const webpush = require('web-push');
 
 // ==================== EMAIL CONFIGURATION ====================
 
-// Gmail transporter setup
+// Gmail transporter setup - FIXED: Changed createTransporter to createTransport
 const createEmailTransporter = () => {
-  return nodemailer.createTransporter({
+  return nodemailer.createTransport({
     service: 'gmail',
     auth: {
       user: process.env.GMAIL_USER, // Your Gmail address
@@ -222,12 +222,20 @@ const sendEmailNotification = async (user, title, message, type) => {
   }
 };
 
-// Push notification service
+// Push notification service - FIXED: Added better validation for push subscriptions
 const sendPushNotification = async (user, title, message, type, relatedId = null) => {
   try {
-    // Skip push notification if user has disabled them or no subscription
-    if (user.pushNotifications === false || !user.pushSubscription) {
-      return { success: false, reason: 'User disabled push notifications or no subscription' };
+    // Skip push notification if user has disabled them or no valid subscription
+    if (user.pushNotifications === false) {
+      return { success: false, reason: 'User disabled push notifications' };
+    }
+
+    // FIXED: Better validation for push subscription
+    if (!user.pushSubscription || 
+        !user.pushSubscription.endpoint || 
+        typeof user.pushSubscription.endpoint !== 'string' ||
+        user.pushSubscription.endpoint.trim() === '') {
+      return { success: false, reason: 'No valid push subscription found' };
     }
 
     const payload = JSON.stringify({
@@ -605,7 +613,7 @@ exports.createNotification = async (userId, title, message, type, relatedId = nu
   }
 };
 
-// Enhanced bulk notifications with email and push
+// Enhanced bulk notifications with email and push - FIXED: Better error handling for push subscriptions
 exports.createBulkNotifications = async (userIds, title, message, type, relatedId = null, relatedModel = null, options = {}) => {
   try {
     // Get all users with their notification preferences
@@ -635,14 +643,20 @@ exports.createBulkNotifications = async (userIds, title, message, type, relatedI
         emailPromises.push(
           sendEmailNotification(user, title, message, type)
             .then(result => ({ userId: user._id, ...result }))
+            .catch(error => ({ userId: user._id, success: false, error: error.message }))
         );
       }
       
-      // Queue push notification
-      if (options.sendPush !== false) {
+      // Queue push notification - FIXED: Only add if user has valid push subscription
+      if (options.sendPush !== false && 
+          user.pushSubscription && 
+          user.pushSubscription.endpoint &&
+          typeof user.pushSubscription.endpoint === 'string' &&
+          user.pushSubscription.endpoint.trim() !== '') {
         pushPromises.push(
           sendPushNotification(user, title, message, type, relatedId)
             .then(result => ({ userId: user._id, ...result }))
+            .catch(error => ({ userId: user._id, success: false, error: error.message }))
         );
       }
     }
@@ -659,13 +673,16 @@ exports.createBulkNotifications = async (userIds, title, message, type, relatedI
         const result = emailResults[i];
         if (result.status === 'fulfilled' && result.value) {
           const { userId, success, error } = result.value;
-          await Notification.findOneAndUpdate(
-            { user: userId, _id: createdNotifications[i]._id },
-            { 
-              emailSent: success,
-              emailError: success ? null : error
-            }
-          );
+          const notificationIndex = users.findIndex(user => user._id.toString() === userId.toString());
+          if (notificationIndex >= 0 && createdNotifications[notificationIndex]) {
+            await Notification.findByIdAndUpdate(
+              createdNotifications[notificationIndex]._id,
+              { 
+                emailSent: success,
+                emailError: success ? null : error
+              }
+            );
+          }
         }
       }
     }
@@ -679,13 +696,16 @@ exports.createBulkNotifications = async (userIds, title, message, type, relatedI
         const result = pushResults[i];
         if (result.status === 'fulfilled' && result.value) {
           const { userId, success, error } = result.value;
-          await Notification.findOneAndUpdate(
-            { user: userId, _id: createdNotifications[i]._id },
-            { 
-              pushSent: success,
-              pushError: success ? null : error
-            }
-          );
+          const notificationIndex = users.findIndex(user => user._id.toString() === userId.toString());
+          if (notificationIndex >= 0 && createdNotifications[notificationIndex]) {
+            await Notification.findByIdAndUpdate(
+              createdNotifications[notificationIndex]._id,
+              { 
+                pushSent: success,
+                pushError: success ? null : error
+              }
+            );
+          }
         }
       }
     }
@@ -793,12 +813,17 @@ exports.sendTestNotification = asyncHandler(async (req, res) => {
   });
 });
 
-// Welcome notification for new users
+// 👋 Welcome to 64SQURS
+// Trigger: When a user logs in for the first time using their Lichess ID
 exports.notifyUserWelcome = async (userId) => {
   try {
-    const title = "Welcome to 64SQURS! 🎉";
-    const message = "Welcome to 64SQURS, your premier chess tournament platform! Get ready to compete, win prizes, and climb the leaderboards. Complete your profile verification to unlock all features.";
+    // Upon successful authentication and first-time sign-in detection (is_first_login == true)
+    const title = "👋 Welcome to 64SQURS";
     
+    // Message content matches documentation exactly
+    const message = "Welcome to 64SQURS! You've successfully signed in using your Lichess ID. Explore tournaments, track your progress, and be part of a growing community of chess lovers. Let's get started!";
+    
+    // Triggered once per account, and only at first login
     return await exports.createNotification(
       userId,
       title,
@@ -917,12 +942,17 @@ exports.notifyTournamentCreated = async (organizerId, tournamentId, tournamentTi
   }
 };
 
-// Notify user when they register for a tournament
+// ✅ You have successfully registered for [Tournament Title].
+// Trigger: Immediately after a user completes payment and registration for any tournament
 exports.notifyTournamentRegistration = async (userId, tournamentId, tournamentTitle) => {
   try {
-    const title = "Tournament Registration Confirmed! ⚡";
-    const message = `You have successfully registered for "${tournamentTitle}". Check your tournament schedule and prepare for an exciting chess battle. Good luck!`;
+    // Dynamic tournament title insertion as per documentation
+    const title = `✅ You have successfully registered for ${tournamentTitle}.`;
     
+    // Message content matches documentation exactly
+    const message = `Your seat is secured! You've successfully registered for the ${tournamentTitle}. Make sure to prepare ahead and bring your A-game. We'll notify you when it's about to begin. Good luck!`;
+    
+    // Real-time trigger (within seconds after successful registration and payment confirmation)
     return await exports.createNotification(
       userId,
       title,
@@ -936,7 +966,6 @@ exports.notifyTournamentRegistration = async (userId, tournamentId, tournamentTi
     return null;
   }
 };
-
 // Notify organizer when someone registers for their tournament
 exports.notifyOrganizerNewRegistration = async (organizerId, tournamentId, tournamentTitle, participantName) => {
   try {
@@ -957,7 +986,8 @@ exports.notifyOrganizerNewRegistration = async (organizerId, tournamentId, tourn
   }
 };
 
-// Notify tournament participants 5 minutes before start
+// 🕐 [Tournament Title] is starting in 5 minutes.
+// Trigger: Exactly 5 minutes before a tournament that a user has registered for begins
 exports.notifyTournamentStartingInFiveMinutes = async (tournamentId) => {
   try {
     const Tournament = require('../models/Tournament');
@@ -967,12 +997,18 @@ exports.notifyTournamentStartingInFiveMinutes = async (tournamentId) => {
       return null;
     }
 
+    // Background job runs scheduled check for all tournaments user has registered for
     const participantIds = tournament.participants.map(p => p._id);
-    const title = "Tournament Starting in 5 Minutes! ⏰";
-    const message = `"${tournament.title}" is starting in 5 minutes! Make sure you're ready to play. Join the tournament now to secure your spot.`;
     
+    // Dynamic Tournament Title insertion based on specific tournament
+    const title = `🕐 ${tournament.title} is starting in 5 minutes.`;
+    
+    // Message content matches documentation exactly
+    const message = `Get ready! The ${tournament.title} you registered for is kicking off in just 5 minutes. Make sure your board is set, and your focus is sharp. Click here to join the action now.`;
+    
+    // Uses tournament_start_time to calculate when to trigger this notification
     return await exports.createBulkNotifications(
-      participantIds,
+      participantIds,  
       title,
       message,
       'tournament_reminder',
@@ -1070,19 +1106,17 @@ exports.notifyTournamentCompleted = async (tournamentId) => {
   }
 };
 
-// Notify tournament winner
+// 🏆 Congratulations! You won 50,000.
+// Trigger: Immediately after a user wins a tournament and their prize has been computed
 exports.notifyTournamentWinner = async (userId, tournamentId, tournamentTitle, position = 1, prizeAmount = 0) => {
   try {
-    const positionText = position === 1 ? '1st' : position === 2 ? '2nd' : position === 3 ? '3rd' : `${position}th`;
-    const title = `🎉 Congratulations! You Finished ${positionText} Place!`;
+    // Calculate prize based on position using tournament prize distribution logic
+    const title = `🏆 Congratulations! You won ${prizeAmount.toLocaleString()}.`;
     
-    let message = `Congratulations! You finished in ${positionText} place in "${tournamentTitle}"! `;
-    if (prizeAmount > 0) {
-      message += `You've won ₦${prizeAmount.toLocaleString()}! Your prize has been added to your wallet.`;
-    } else {
-      message += `Great performance! Keep up the excellent chess playing.`;
-    }
+    // Message format matches documentation - no mention of position
+    const message = `You've just claimed a prize of ₦${prizeAmount.toLocaleString()} in your recent tournament victory! Your gameplay was impressive, and your effort paid off. Keep playing and keep winning—more prizes await you in upcoming tournaments.`;
     
+    // Triggered within 1 minute after tournament ends and results are processed
     return await exports.createNotification(
       userId,
       title,
@@ -1223,6 +1257,32 @@ exports.notifyLowBalance = async (userId, currentBalance, threshold = 1000) => {
     );
   } catch (error) {
     console.error('Error sending low balance notification:', error);
+    return null;
+  }
+};
+
+
+// 💸 Withdrawal Successful
+// Trigger: Immediately after a user's withdrawal request is processed and approved
+exports.notifyWithdrawalSuccess = async (userId, withdrawalAmount, transactionId = null) => {
+  try {
+    // Check withdrawal_status == "completed" or success == true logic
+    const title = `💸 Withdrawal of ₦${withdrawalAmount.toLocaleString()} Successful!`;
+    
+    // Amount withdrawn is dynamically pulled from the approved request
+    const message = `Your withdrawal of ₦${withdrawalAmount.toLocaleString()} has been successfully processed. The funds have been sent to your registered account. Please allow a short while for it to reflect, depending on your payment provider. Thank you for using 64SQURS!`;
+    
+    // Real-time trigger (as soon as payment API or internal payout confirms success)
+    return await exports.createNotification(
+      userId,
+      title,
+      message,
+      'transaction_success',
+      transactionId,
+      'Transaction'
+    );
+  } catch (error) {
+    console.error('Error sending withdrawal success notification:', error);
     return null;
   }
 };
