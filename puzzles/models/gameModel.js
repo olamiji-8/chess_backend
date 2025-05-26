@@ -23,9 +23,34 @@ const GameSchema = new Schema({
     default: null
   },
   moves: [{
-    from: String,
-    to: String,
-    piece: String,
+    from: {
+      type: String,
+      required: true
+    },
+    to: {
+      type: String,
+      required: true
+    },
+    piece: {
+      type: String,
+      required: true
+    },
+    captured: {
+      type: String,
+      default: null
+    },
+    promotion: {
+      type: String,
+      default: null
+    },
+    flags: {
+      type: String,
+      required: true
+    },
+    san: {
+      type: String,
+      required: true
+    },
     timestamp: {
       type: Date,
       default: Date.now
@@ -53,5 +78,10 @@ const GameSchema = new Schema({
     default: Date.now
   }
 });
+
+// Add indexes for better query performance
+GameSchema.index({ whitePlayer: 1, status: 1 });
+GameSchema.index({ blackPlayer: 1, status: 1 });
+GameSchema.index({ status: 1, lastMoveAt: -1 });
 
 module.exports = mongoose.model('Game', GameSchema);
