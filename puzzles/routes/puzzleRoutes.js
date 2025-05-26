@@ -6,7 +6,7 @@ const puzzleController = require('../controllers/puzzleController');
 router.get('/:userId', puzzleController.getPuzzle);
 
 // Get a hint for a puzzle
-router.get('/hint/:attemptId', puzzleController.getHint);
+router.get('/hints/:attemptId', puzzleController.getHint);
 
 // Submit a move for a puzzle
 router.post('/move/:attemptId', puzzleController.submitMove);

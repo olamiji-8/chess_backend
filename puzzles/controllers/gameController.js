@@ -1,8 +1,9 @@
-// Game controller for multiplayer
+// Game controller for multiplayer chess with Chess.js validation
 const Game = require('../models/gameModel');
 const User = require('../models/userModel');
 const OnlineUser = require('../models/onlineUserModel');
 const mongoose = require('mongoose');
+const { Chess } = require('chess.js');
 
 // Create a new game
 exports.createGame = async (req, res) => {
@@ -12,6 +13,11 @@ exports.createGame = async (req, res) => {
     // Validate presence of players
     if (!whitePlayerId || !blackPlayerId) {
       return res.status(400).json({ message: 'Both player IDs are required' });
+    }
+    
+    // Prevent self-play
+    if (whitePlayerId === blackPlayerId) {
+      return res.status(400).json({ message: 'Players cannot play against themselves' });
     }
     
     // Check if players exist
@@ -39,12 +45,14 @@ exports.createGame = async (req, res) => {
       });
     }
     
-    // Create new game
+    // Create new game with chess.js validation
+    const chess = new Chess();
     const game = new Game({
       whitePlayer: whitePlayerId,
       blackPlayer: blackPlayerId,
       status: 'active',
-      // Default FEN is already set in the model
+      fen: chess.fen(),
+      pgn: chess.pgn()
     });
     
     await game.save();
@@ -65,10 +73,18 @@ exports.createGame = async (req, res) => {
       message: 'Game created successfully',
       game: {
         id: game._id,
-        whitePlayer: whitePlayer.username,
-        blackPlayer: blackPlayer.username,
+        whitePlayer: {
+          id: whitePlayer._id,
+          username: whitePlayer.username
+        },
+        blackPlayer: {
+          id: blackPlayer._id,
+          username: blackPlayer.username
+        },
         status: game.status,
         fen: game.fen,
+        pgn: game.pgn,
+        currentTurn: 'white',
         createdAt: game.createdAt
       }
     });
@@ -93,6 +109,10 @@ exports.getGameDetails = async (req, res) => {
       return res.status(404).json({ message: 'Game not found' });
     }
     
+    // Calculate current turn
+    const chess = new Chess(game.fen);
+    const currentTurn = chess.turn() === 'w' ? 'white' : 'black';
+    
     res.status(200).json({
       game: {
         id: game._id,
@@ -115,8 +135,14 @@ exports.getGameDetails = async (req, res) => {
           username: game.winner.username
         } : null,
         moves: game.moves,
+        currentTurn: currentTurn,
+        isCheck: chess.inCheck(),
+        isCheckmate: chess.isCheckmate(),
+        isStalemate: chess.isStalemate(),
+        isDraw: chess.isDraw(),
         createdAt: game.createdAt,
-        lastMoveAt: game.lastMoveAt
+        lastMoveAt: game.lastMoveAt,
+        moveCount: game.moves.length
       }
     });
     
@@ -130,11 +156,11 @@ exports.getGameDetails = async (req, res) => {
 exports.makeMove = async (req, res) => {
   try {
     const { gameId } = req.params;
-    const { from, to, piece, pgn, fen, userId, isCheck, isCheckmate, isDraw } = req.body;
+    const { from, to, userId, promotion } = req.body;
     
     // Validate move data
-    if (!from || !to || !piece || !pgn || !fen || !userId) {
-      return res.status(400).json({ message: 'All move details are required' });
+    if (!from || !to || !userId) {
+      return res.status(400).json({ message: 'from, to, and userId are required' });
     }
     
     // Find the game
@@ -149,50 +175,93 @@ exports.makeMove = async (req, res) => {
       return res.status(403).json({ message: `Game is not active, current status: ${game.status}` });
     }
     
+    // Initialize chess with current game state
+    const chess = new Chess(game.fen);
+    
     // Verify it's the user's turn
-    const isWhiteMove = game.moves.length % 2 === 0;
+    const currentTurn = chess.turn(); // 'w' for white, 'b' for black
     const playerRole = game.whitePlayer.toString() === userId ? 'white' : 'black';
     
-    if ((isWhiteMove && playerRole !== 'white') || (!isWhiteMove && playerRole !== 'black')) {
+    if (!game.whitePlayer.equals(userId) && !game.blackPlayer.equals(userId)) {
+      return res.status(403).json({ message: 'You are not a player in this game' });
+    }
+    
+    if ((currentTurn === 'w' && playerRole !== 'white') || 
+        (currentTurn === 'b' && playerRole !== 'black')) {
       return res.status(403).json({ message: 'It\'s not your turn' });
     }
     
+    // Attempt to make the move
+    const moveOptions = { from, to };
+    if (promotion) {
+      moveOptions.promotion = promotion; // for pawn promotion
+    }
+    
+    const move = chess.move(moveOptions);
+    
+    if (!move) {
+      return res.status(400).json({ 
+        message: 'Invalid move',
+        details: 'Move is not legal in current position'
+      });
+    }
+    
     // Record the move
-    game.moves.push({ from, to, piece });
-    game.fen = fen;
-    game.pgn = pgn;
+    game.moves.push({ 
+      from: move.from, 
+      to: move.to, 
+      piece: move.piece,
+      captured: move.captured || null,
+      promotion: move.promotion || null,
+      flags: move.flags,
+      san: move.san
+    });
+    
+    game.fen = chess.fen();
+    game.pgn = chess.pgn();
     game.lastMoveAt = new Date();
     
-    // Check if the game is over
-    if (isCheckmate) {
+    // Check game state
+    const isCheck = chess.inCheck();
+    const isCheckmate = chess.isCheckmate();
+    const isStalemate = chess.isStalemate();
+    const isDraw = chess.isDraw();
+    const isGameOver = chess.isGameOver();
+    
+    // Handle game completion
+    if (isGameOver) {
       game.status = 'completed';
-      game.winner = userId;
-      game.result = playerRole === 'white' ? '1-0' : '0-1';
       
-      // Update winner's stats
-      const winner = await User.findById(userId);
-      if (winner) {
-        winner.points += 1; // 1 point for winning multiplayer
-        winner.wonGames += 1;
-        await winner.save();
-      }
-      
-    } else if (isDraw) {
-      game.status = 'completed';
-      game.result = '1/2-1/2';
-      
-      // Update both players (0.5 points each for draw)
-      const whitePlayer = await User.findById(game.whitePlayer);
-      const blackPlayer = await User.findById(game.blackPlayer);
-      
-      if (whitePlayer) {
-        whitePlayer.points += 0.5;
-        await whitePlayer.save();
-      }
-      
-      if (blackPlayer) {
-        blackPlayer.points += 0.5;
-        await blackPlayer.save();
+      if (isCheckmate) {
+        // Current player wins (the one who just moved)
+        game.winner = userId;
+        game.result = playerRole === 'white' ? '1-0' : '0-1';
+        
+        // Update winner's stats
+        const winner = await User.findById(userId);
+        if (winner) {
+          winner.points += 1;
+          winner.wonGames += 1;
+          await winner.save();
+        }
+        
+      } else if (isDraw || isStalemate) {
+        // Draw
+        game.result = '1/2-1/2';
+        
+        // Update both players (0.5 points each for draw)
+        const whitePlayer = await User.findById(game.whitePlayer);
+        const blackPlayer = await User.findById(game.blackPlayer);
+        
+        if (whitePlayer) {
+          whitePlayer.points += 0.5;
+          await whitePlayer.save();
+        }
+        
+        if (blackPlayer) {
+          blackPlayer.points += 0.5;
+          await blackPlayer.save();
+        }
       }
     }
     
@@ -208,14 +277,29 @@ exports.makeMove = async (req, res) => {
     
     res.status(200).json({
       message: 'Move recorded successfully',
-      move: { from, to, piece },
-      fen: game.fen,
-      status: game.status,
-      isCheck,
-      isCheckmate,
-      isDraw,
-      result: game.result,
-      winner: game.winner
+      move: {
+        from: move.from,
+        to: move.to,
+        piece: move.piece,
+        captured: move.captured,
+        promotion: move.promotion,
+        san: move.san,
+        flags: move.flags
+      },
+      gameState: {
+        fen: game.fen,
+        pgn: game.pgn,
+        status: game.status,
+        currentTurn: chess.turn() === 'w' ? 'white' : 'black',
+        isCheck: isCheck,
+        isCheckmate: isCheckmate,
+        isStalemate: isStalemate,
+        isDraw: isDraw,
+        isGameOver: isGameOver,
+        result: game.result,
+        winner: game.winner,
+        moveCount: game.moves.length
+      }
     });
     
   } catch (error) {
@@ -247,7 +331,7 @@ exports.resignGame = async (req, res) => {
     }
     
     // Verify user is a player in this game
-    if (game.whitePlayer.toString() !== userId && game.blackPlayer.toString() !== userId) {
+    if (!game.whitePlayer.equals(userId) && !game.blackPlayer.equals(userId)) {
       return res.status(403).json({ message: 'You are not a player in this game' });
     }
     
@@ -257,18 +341,22 @@ exports.resignGame = async (req, res) => {
     // Set the opponent as winner
     if (game.whitePlayer.toString() === userId) {
       game.winner = game.blackPlayer;
-      game.result = '0-1'; // Black wins
+      game.result = '0-1'; // Black wins by resignation
     } else {
       game.winner = game.whitePlayer;
-      game.result = '1-0'; // White wins
+      game.result = '1-0'; // White wins by resignation
     }
+    
+    // Update PGN to include resignation
+    const chess = new Chess(game.fen);
+    game.pgn = chess.pgn() + (game.result === '1-0' ? ' 1-0' : ' 0-1');
     
     await game.save();
     
     // Update winner's stats
     const winner = await User.findById(game.winner);
     if (winner) {
-      winner.points += 1; // 1 point for winning multiplayer
+      winner.points += 1;
       winner.wonGames += 1;
       await winner.save();
     }
@@ -283,7 +371,8 @@ exports.resignGame = async (req, res) => {
       message: 'Game resigned successfully',
       status: game.status,
       result: game.result,
-      winner: game.winner
+      winner: game.winner,
+      pgn: game.pgn
     });
     
   } catch (error) {
@@ -305,8 +394,14 @@ exports.getUserActiveGames = async (req, res) => {
     .populate('blackPlayer', 'username')
     .sort({ lastMoveAt: -1 });
     
-    res.status(200).json({ 
-      games: activeGames.map(game => ({
+    const gamesWithDetails = activeGames.map(game => {
+      const chess = new Chess(game.fen);
+      const currentTurn = chess.turn();
+      const playerRole = game.whitePlayer._id.toString() === userId ? 'white' : 'black';
+      const isPlayerTurn = (currentTurn === 'w' && playerRole === 'white') || 
+                          (currentTurn === 'b' && playerRole === 'black');
+      
+      return {
         id: game._id,
         whitePlayer: {
           id: game.whitePlayer._id,
@@ -318,12 +413,18 @@ exports.getUserActiveGames = async (req, res) => {
         },
         status: game.status,
         fen: game.fen,
+        currentTurn: currentTurn === 'w' ? 'white' : 'black',
         lastMoveAt: game.lastMoveAt,
-        playerRole: game.whitePlayer._id.toString() === userId ? 'white' : 'black',
-        isPlayerTurn: 
-          (game.moves.length % 2 === 0 && game.whitePlayer._id.toString() === userId) || 
-          (game.moves.length % 2 === 1 && game.blackPlayer._id.toString() === userId)
-      }))
+        playerRole: playerRole,
+        isPlayerTurn: isPlayerTurn,
+        moveCount: game.moves.length,
+        isCheck: chess.inCheck()
+      };
+    });
+    
+    res.status(200).json({ 
+      games: gamesWithDetails,
+      count: gamesWithDetails.length
     });
     
   } catch (error) {
@@ -356,8 +457,18 @@ exports.getUserGameHistory = async (req, res) => {
       $or: [{ whitePlayer: userId }, { blackPlayer: userId }]
     });
     
-    res.status(200).json({ 
-      games: games.map(game => ({
+    const gamesWithDetails = games.map(game => {
+      const playerRole = game.whitePlayer._id.toString() === userId ? 'white' : 'black';
+      const didPlayerWin = game.winner && game.winner._id.toString() === userId;
+      
+      let gameResult = 'loss';
+      if (game.result === '1/2-1/2') {
+        gameResult = 'draw';
+      } else if (didPlayerWin) {
+        gameResult = 'win';
+      }
+      
+      return {
         id: game._id,
         whitePlayer: {
           id: game.whitePlayer._id,
@@ -372,11 +483,17 @@ exports.getUserGameHistory = async (req, res) => {
           id: game.winner._id,
           username: game.winner.username
         } : null,
-        playerRole: game.whitePlayer._id.toString() === userId ? 'white' : 'black',
-        didPlayerWin: game.winner && game.winner._id.toString() === userId,
+        playerRole: playerRole,
+        gameResult: gameResult,
+        didPlayerWin: didPlayerWin,
         completedAt: game.lastMoveAt,
-        movesCount: game.moves.length
-      })),
+        movesCount: game.moves.length,
+        pgn: game.pgn
+      };
+    });
+    
+    res.status(200).json({ 
+      games: gamesWithDetails,
       pagination: {
         total,
         page: parseInt(page),
@@ -400,7 +517,9 @@ exports.findOpponent = async (req, res) => {
       return res.status(400).json({ message: 'Username is required' });
     }
     
-    const opponent = await User.findOne({ username }).select('_id username points');
+    const opponent = await User.findOne({ 
+      username: { $regex: new RegExp(username, 'i') } // Case insensitive search
+    }).select('_id username points playedGames wonGames');
     
     if (!opponent) {
       return res.status(404).json({ message: 'User not found' });
@@ -409,13 +528,24 @@ exports.findOpponent = async (req, res) => {
     // Check if opponent is online
     const opponentOnline = await OnlineUser.findOne({ user: opponent._id });
     
+    // Check if opponent is in active game
+    const opponentInGame = await Game.findOne({
+      status: 'active',
+      $or: [{ whitePlayer: opponent._id }, { blackPlayer: opponent._id }]
+    });
+    
     res.status(200).json({
       opponent: {
         id: opponent._id,
         username: opponent.username,
         points: opponent.points,
+        playedGames: opponent.playedGames,
+        wonGames: opponent.wonGames,
+        winRate: opponent.playedGames > 0 ? 
+          ((opponent.wonGames / opponent.playedGames) * 100).toFixed(1) + '%' : '0%',
         isOnline: !!opponentOnline,
-        status: opponentOnline ? opponentOnline.status : 'offline'
+        status: opponentOnline ? opponentOnline.status : 'offline',
+        isInGame: !!opponentInGame
       }
     });
     
@@ -433,25 +563,67 @@ exports.getOnlineUsers = async (req, res) => {
     // Get online users excluding the requesting user
     const onlineUsers = await OnlineUser.find({
       user: { $ne: mongoose.Types.ObjectId(userId) },
-      status: 'online'
+      status: { $in: ['online', 'away'] } // Exclude users in games
     })
     .populate('user', 'username points playedGames wonGames')
     .sort({ lastActive: -1 })
     .limit(20);
     
+    const usersWithStats = onlineUsers.map(ou => ({
+      id: ou.user._id,
+      username: ou.user.username,
+      points: ou.user.points,
+      playedGames: ou.user.playedGames,
+      wonGames: ou.user.wonGames,
+      winRate: ou.user.playedGames > 0 ? 
+        ((ou.user.wonGames / ou.user.playedGames) * 100).toFixed(1) + '%' : '0%',
+      status: ou.status,
+      lastActive: ou.lastActive
+    }));
+    
     res.status(200).json({
-      onlineUsers: onlineUsers.map(ou => ({
-        id: ou.user._id,
-        username: ou.user.username,
-        points: ou.user.points,
-        playedGames: ou.user.playedGames,
-        wonGames: ou.user.wonGames,
-        lastActive: ou.lastActive
-      }))
+      onlineUsers: usersWithStats,
+      count: usersWithStats.length
     });
     
   } catch (error) {
     console.error('Error in getOnlineUsers:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+// Get possible moves for a piece (helper endpoint for frontend)
+exports.getPossibleMoves = async (req, res) => {
+  try {
+    const { gameId } = req.params;
+    const { square } = req.query;
+    
+    if (!square) {
+      return res.status(400).json({ message: 'Square parameter is required' });
+    }
+    
+    const game = await Game.findById(gameId);
+    
+    if (!game) {
+      return res.status(404).json({ message: 'Game not found' });
+    }
+    
+    const chess = new Chess(game.fen);
+    const moves = chess.moves({ square: square, verbose: true });
+    
+    res.status(200).json({
+      square: square,
+      possibleMoves: moves.map(move => ({
+        to: move.to,
+        piece: move.piece,
+        captured: move.captured,
+        promotion: move.promotion,
+        flags: move.flags
+      }))
+    });
+    
+  } catch (error) {
+    console.error('Error in getPossibleMoves:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
