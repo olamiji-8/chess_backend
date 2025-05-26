@@ -6,7 +6,9 @@ const PuzzleUserSchema = new Schema({
     type: String,
     required: true,
     unique: true,
-    trim: true
+    trim: true,
+    minlength: 3,
+    maxlength: 20
   },
   points: {
     type: Number,
@@ -33,6 +35,19 @@ const PuzzleUserSchema = new Schema({
     default: 0
   },
   wonGames: {
+    type: Number,
+    default: 0
+  },
+  // Additional helpful fields
+  totalPuzzlesSolved: {
+    type: Number,
+    default: 0
+  },
+  bestStreak: {
+    type: Number,
+    default: 0
+  },
+  averagePuzzleTime: {
     type: Number,
     default: 0
   }
@@ -63,12 +78,30 @@ PuzzleUserSchema.methods.updateStreak = function() {
     if ((now - new Date(this.lastStreakUpdate)) / (1000 * 60 * 60) >= 24) {
       this.streak += 1;
     }
-    // If less than 24 hours, the streak remains the same (already played today)
+  }
+  
+  // Update best streak if current is higher
+  if (this.streak > this.bestStreak) {
+    this.bestStreak = this.streak;
   }
   
   this.lastStreakUpdate = now;
   return this.streak;
 };
 
-// Using a different model name to avoid conflicts
+// Method to calculate win rate
+PuzzleUserSchema.methods.getWinRate = function() {
+  if (this.playedGames === 0) return 0;
+  return Math.round((this.wonGames / this.playedGames) * 100);
+};
+
+// Virtual for next puzzle availability
+PuzzleUserSchema.virtual('nextPuzzleAvailable').get(function() {
+  if (!this.lastPuzzleDate) return new Date();
+  
+  const nextTime = new Date(this.lastPuzzleDate);
+  nextTime.setHours(nextTime.getHours() + 24);
+  return nextTime;
+});
+
 module.exports = mongoose.model('PuzzleUser', PuzzleUserSchema);
