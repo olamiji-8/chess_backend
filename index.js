@@ -46,7 +46,8 @@ const corsOptions = {
     process.env.FRONTEND_URL, 
     'http://localhost:3000', 
     'https://sport64sqrs.vercel.app',
-    'https://sport64sqrs-admin.vercel.app'
+    'https://sport64sqrs-admin.vercel.app',
+    'https://64sqrs.live'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
