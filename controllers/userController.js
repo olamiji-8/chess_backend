@@ -9,7 +9,7 @@ const fs = require('fs');
 const generatePKCE = require('../server/utils/pkce');
 const { verifyUserPin } = require('../utils/pinVerification');
 const jwt = require('jsonwebtoken');
-
+const { notifyUserWelcome } = require('../controllers/notificationController');
 
 const CLIENT_ID = process.env.LICHESS_CLIENT_ID;
 const REDIRECT_URI = process.env.LICHESS_REDIRECT_URI || 'http://localhost:5000/api/users/callback';
@@ -233,6 +233,16 @@ exports.handleCallback = async (req, res) => {
 
     const { username, email: lichessEmail } = userRes.data;
 
+    // Check if this is a new user
+    const existingUser = await User.findOne({
+      $or: [
+        { lichessUsername: username },
+        { email: lichessEmail || `${username}@lichess.org` },
+      ],
+    });
+
+    const isNewUser = !existingUser;
+
     // Use findOneAndUpdate instead of find + save to reduce DB operations
     const user = await User.findOneAndUpdate(
       {
@@ -246,7 +256,8 @@ exports.handleCallback = async (req, res) => {
           fullName: username,
           email: lichessEmail || `${username}@lichess.org`,
           password: await bcrypt.hash(crypto.randomBytes(20).toString("hex"), 10),
-          isVerified: false
+          isVerified: false,
+          isFirstLogin: true // Mark new Lichess users for welcome notification
         },
         $set: {
           lichessUsername: username,
@@ -255,6 +266,21 @@ exports.handleCallback = async (req, res) => {
       },
       { upsert: true, new: true }
     );
+
+    // 🎉 AUTOMATED WELCOME NOTIFICATION FOR NEW LICHESS USERS
+    if (isNewUser || user.isFirstLogin) {
+      try {
+        await notifyUserWelcome(user._id);
+        console.log(`Welcome notification sent to Lichess user: ${username}`);
+        
+        // Update the flag to prevent future welcome notifications
+        if (user.isFirstLogin) {
+          await User.findByIdAndUpdate(user._id, { isFirstLogin: false });
+        }
+      } catch (error) {
+        console.error('Failed to send welcome notification for Lichess user:', error);
+      }
+    }
 
     // Clear the code verifier cookie
     res.clearCookie('codeVerifier');
@@ -274,6 +300,7 @@ exports.handleCallback = async (req, res) => {
     return res.redirect(`${FRONTEND_URL}/login?error=auth_failed&message=${encodeURIComponent(error.message)}`);
   }
 };
+
 
 
 exports.getUserProfile = asyncHandler(async (req, res) => {
