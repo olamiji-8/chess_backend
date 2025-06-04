@@ -200,7 +200,54 @@ const sendEmailNotification = async (user, title, message, type) => {
             </div>
           </div>
         `
-      }
+      },
+      'system_message': {
+        subject: `🎉 Welcome to 64SQURS - Your Chess Journey Begins!`,
+        html: `
+          <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff;">
+            <!-- Header -->
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px 20px; text-align: center;">
+              <h1 style="color: white; margin: 0; font-size: 28px; font-weight: bold;">♟️ 64SQURS</h1>
+              <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 14px;">Your Premier Chess Tournament Platform</p>
+            </div>
+            
+            <!-- Main Content -->
+            <div style="padding: 40px 30px; background: #f8fafc;">
+              <div style="background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+                <h2 style="color: #2d3748; margin: 0 0 20px 0; font-size: 24px;">${title}</h2>
+                
+                <div style="color: #4a5568; line-height: 1.8; font-size: 16px; margin: 0 0 25px 0;">
+                  ${message.replace(/\n/g, '<br>')}
+                </div>
+                
+                <!-- Call to Action -->
+                <div style="text-align: center; margin: 30px 0 20px 0;">
+                  <a href="${process.env.FRONTEND_URL || 'https://64squrs.com'}" 
+                     style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                            color: white; 
+                            padding: 15px 35px; 
+                            text-decoration: none; 
+                            border-radius: 25px; 
+                            display: inline-block; 
+                            font-weight: bold; 
+                            font-size: 16px;
+                            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);">
+                    🎯 Start Playing Now
+                  </a>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Footer -->
+            <div style="padding: 25px; text-align: center; background: #edf2f7;">
+              <p style="color: #a0aec0; font-size: 12px; margin: 0;">
+                You can manage notifications in your 
+                <a href="${process.env.FRONTEND_URL || 'https://64squrs.com'}/settings" style="color: #667eea;">account settings</a>.
+              </p>
+            </div>
+          </div>
+        `
+      },
     };
 
     const template = emailTemplates[type] || emailTemplates['system_message'];
@@ -817,27 +864,51 @@ exports.sendTestNotification = asyncHandler(async (req, res) => {
 // Trigger: When a user logs in for the first time using their Lichess ID
 exports.notifyUserWelcome = async (userId) => {
   try {
-    // Upon successful authentication and first-time sign-in detection (is_first_login == true)
+    console.log(`🎯 Sending welcome notification to user: ${userId}`);
+    
     const title = "👋 Welcome to 64SQURS";
     
-    // Message content matches documentation exactly
-    const message = "Welcome to 64SQURS! You've successfully signed in using your Lichess ID. Explore tournaments, track your progress, and be part of a growing community of chess lovers. Let's get started!";
+    // Enhanced welcome message with more engaging content
+    const message = `Welcome to 64SQURS! 🎉
     
-    // Triggered once per account, and only at first login
-    return await exports.createNotification(
+You've successfully signed in using your Lichess ID. We're excited to have you join our growing community of chess enthusiasts!
+
+Here's what you can do:
+• 🏆 Explore and join exciting tournaments
+• 📊 Track your chess progress and statistics  
+• 🤝 Connect with fellow chess players
+• 🎯 Compete for prizes and recognition
+
+Ready to make your first move? Let's get started!`;
+    
+    // Create notification with enhanced options
+    const result = await exports.createNotification(
       userId,
       title,
       message,
-      'system_message',
-      null,
-      null,
-      { sendEmail: true, sendPush: true }
+      'system_message', // This matches your email template
+      null, // no tournament reference
+      null, // no additional data
+      { 
+        sendEmail: true, 
+        sendPush: true,
+        priority: 'high' // Mark as high priority
+      }
     );
+    
+    if (result) {
+      console.log(`✅ Welcome notification sent successfully to user ${userId}`);
+    } else {
+      console.log(`❌ Failed to send welcome notification to user ${userId}`);
+    }
+    
+    return result;
   } catch (error) {
-    console.error('Error sending welcome notification:', error);
+    console.error('❌ Error sending welcome notification:', error);
     return null;
   }
 };
+
 
 // ==================== VERIFICATION NOTIFICATIONS ====================
 
