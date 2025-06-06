@@ -196,6 +196,7 @@ exports.loginWithLichess = (req, res) => {
 };
 
 // Handle callback from Lichess
+// Enhanced Lichess callback with better email handling
 exports.handleCallback = async (req, res) => {
   try {
     const { code } = req.query;
@@ -206,7 +207,7 @@ exports.handleCallback = async (req, res) => {
       return res.redirect(`${FRONTEND_URL}/onboarding?error=missing_code_verifier`);
     }
 
-    // Exchange the code for an access token - this is likely slow
+    // Exchange the code for an access token
     const params = new URLSearchParams();
     params.append("grant_type", "authorization_code");
     params.append("code", code);
@@ -214,10 +215,9 @@ exports.handleCallback = async (req, res) => {
     params.append("redirect_uri", REDIRECT_URI);
     params.append("code_verifier", codeVerifier);
 
-    // Set a timeout for the token request
     const tokenResponse = await axios.post("https://lichess.org/api/token", params, {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      timeout: 5000 // Add a 5 second timeout
+      timeout: 5000
     });
 
     const accessToken = tokenResponse.data.access_token;
@@ -225,61 +225,90 @@ exports.handleCallback = async (req, res) => {
       throw new Error("Lichess authentication failed: No access token received.");
     }
 
-    // Fetch user details - another potential slowdown
+    // Fetch user details from Lichess
     const userRes = await axios.get("https://lichess.org/api/account", {
       headers: { Authorization: `Bearer ${accessToken}` },
-      timeout: 5000 // Add a 5 second timeout
+      timeout: 5000
     });
 
-    const { username, email: lichessEmail } = userRes.data;
+    const lichessUserData = userRes.data;
+    console.log(`📊 Lichess user data received:`, {
+      username: lichessUserData.username,
+      email: lichessUserData.email || 'NOT PROVIDED',
+      profile: lichessUserData.profile || 'NO PROFILE'
+    });
+
+    const { username, email: lichessEmail } = lichessUserData;
+
+    // Handle missing email from Lichess
+    const userEmail = lichessEmail || `${username}@lichess.temp`;
+    console.log(`📧 Using email: ${userEmail} (Original: ${lichessEmail || 'none'})`);
 
     // Check if this is a new user
     const existingUser = await User.findOne({
       $or: [
         { lichessUsername: username },
-        { email: lichessEmail || `${username}@lichess.org` },
+        { email: userEmail },
       ],
     });
 
     const isNewUser = !existingUser;
+    console.log(`👤 User status: ${isNewUser ? 'NEW USER' : 'EXISTING USER'}`);
 
-    // Use findOneAndUpdate instead of find + save to reduce DB operations
+    // Create/update user with better email handling
     const user = await User.findOneAndUpdate(
       {
         $or: [
           { lichessUsername: username },
-          { email: lichessEmail || `${username}@lichess.org` },
+          { email: userEmail },
         ],
       },
       {
         $setOnInsert: {
           fullName: username,
-          email: lichessEmail || `${username}@lichess.org`,
+          email: userEmail,
           password: await bcrypt.hash(crypto.randomBytes(20).toString("hex"), 10),
-          isVerified: false,
-          isFirstLogin: true // Mark new Lichess users for welcome notification
+          isVerified: lichessEmail ? true : false, // Only verify if real email provided
+          isFirstLogin: true,
+          lichessHasEmail: !!lichessEmail // Track if Lichess provided email
         },
         $set: {
           lichessUsername: username,
-          lichessAccessToken: accessToken
+          lichessAccessToken: accessToken,
+          // Update email only if Lichess provides a real one
+          ...(lichessEmail && { email: lichessEmail, isVerified: true })
         }
       },
       { upsert: true, new: true }
     );
 
-    // 🎉 AUTOMATED WELCOME NOTIFICATION FOR NEW LICHESS USERS
-    if (isNewUser || user.isFirstLogin) {
+    console.log(`💾 User saved:`, {
+      id: user._id,
+      email: user.email,
+      lichessUsername: user.lichessUsername,
+      isVerified: user.isVerified,
+      isFirstLogin: user.isFirstLogin,
+      lichessHasEmail: user.lichessHasEmail
+    });
+
+    // 🎉 Send welcome notification (only if we have a real email)
+    if ((isNewUser || user.isFirstLogin) && user.lichessHasEmail) {
       try {
-        await notifyUserWelcome(user._id);
-        console.log(`Welcome notification sent to Lichess user: ${username}`);
+        console.log(`🎉 Triggering welcome notification for user: ${user._id}`);
+        
+        const welcomeResult = await notifyUserWelcome(user._id);
+        console.log(`📨 Welcome notification result:`, welcomeResult);
         
         // Update the flag to prevent future welcome notifications
         if (user.isFirstLogin) {
           await User.findByIdAndUpdate(user._id, { isFirstLogin: false });
+          console.log(`✅ Updated isFirstLogin flag for user: ${user._id}`);
         }
       } catch (error) {
-        console.error('Failed to send welcome notification for Lichess user:', error);
+        console.error('❌ Failed to send welcome notification:', error);
       }
+    } else if (!user.lichessHasEmail) {
+      console.log(`⚠️ Skipping welcome email - no real email from Lichess for user: ${username}`);
     }
 
     // Clear the code verifier cookie
@@ -290,6 +319,7 @@ exports.handleCallback = async (req, res) => {
 
     // Redirect to frontend with JWT token
     return res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}`);
+    
   } catch (error) {
     console.error("❌ Lichess Authentication Error:", {
       message: error.message,
@@ -300,7 +330,6 @@ exports.handleCallback = async (req, res) => {
     return res.redirect(`${FRONTEND_URL}/login?error=auth_failed&message=${encodeURIComponent(error.message)}`);
   }
 };
-
 
 
 exports.getUserProfile = asyncHandler(async (req, res) => {

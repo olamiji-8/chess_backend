@@ -860,24 +860,41 @@ exports.sendTestNotification = asyncHandler(async (req, res) => {
   });
 });
 
-// 👋 Welcome to 64SQURS
+// 👋 Welcome to 64SQURS - Enhanced with debugging
 // Trigger: When a user logs in for the first time using their Lichess ID
-// Fixed version of notifyUserWelcome function
 exports.notifyUserWelcome = async (userId) => {
   try {
-    console.log(`🎯 Sending welcome notification to user: ${userId}`);
+    console.log(`🎯 Starting welcome notification process for user: ${userId}`);
     
     // STEP 1: Fetch the complete user object with email
-    const user = await User.findById(userId); // or however you fetch users in your app
+    const user = await User.findById(userId);
     
     if (!user) {
       console.error(`❌ User not found: ${userId}`);
-      return null;
+      return { success: false, error: 'User not found' };
     }
+    
+    // DEBUG: Log the complete user object (remove sensitive data)
+    console.log(`👤 User found:`, {
+      id: user._id,
+      fullName: user.fullName,
+      email: user.email,
+      lichessUsername: user.lichessUsername,
+      isVerified: user.isVerified,
+      isFirstLogin: user.isFirstLogin
+    });
     
     if (!user.email) {
       console.error(`❌ User email not found for user: ${userId}`);
-      return null;
+      console.log(`📧 Email field value:`, user.email);
+      return { success: false, error: 'User email not found' };
+    }
+    
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(user.email)) {
+      console.error(`❌ Invalid email format: ${user.email}`);
+      return { success: false, error: 'Invalid email format' };
     }
     
     console.log(`📧 Sending welcome email to: ${user.email}`);
@@ -896,47 +913,96 @@ Here's what you can do:
 
 Ready to make your first move? Let's get started!`;
     
-    // STEP 2: Send email notification directly
-    const emailResult = await sendEmailNotification(
-      user,  // Pass the complete user object, not just userId
-      title,
-      message,
-      'system_message'
-    );
+    // STEP 2: Send email notification with enhanced error handling
+    console.log(`📨 Calling sendEmailNotification...`);
+    let emailResult;
     
-    // STEP 3: Create in-app notification
-    const notificationResult = await exports.createNotification(
-      userId,
-      title,
-      message,
-      'system_message',
-      null,
-      null,
-      { 
-        sendEmail: false, // We already sent email above
-        sendPush: true,
-        priority: 'high'
-      }
-    );
-    
-    if (emailResult.success) {
-      console.log(`✅ Welcome email sent successfully to ${user.email}`);
-      console.log(`📨 Email Message ID: ${emailResult.messageId}`);
-    } else {
-      console.error(`❌ Failed to send welcome email: ${emailResult.error}`);
+    try {
+      emailResult = await sendEmailNotification(
+        user,  // Pass the complete user object
+        title,
+        message,
+        'system_message'
+      );
+      
+      console.log(`📨 Email service response:`, emailResult);
+      
+    } catch (emailError) {
+      console.error(`❌ Email service error:`, emailError);
+      emailResult = { 
+        success: false, 
+        error: emailError.message,
+        stack: emailError.stack 
+      };
     }
     
-    return {
+    // STEP 3: Create in-app notification
+    console.log(`📱 Creating in-app notification...`);
+    let notificationResult;
+    
+    try {
+      notificationResult = await exports.createNotification(
+        userId,
+        title,
+        message,
+        'system_message',
+        null,
+        null,
+        { 
+          sendEmail: false, // We already sent email above
+          sendPush: true,
+          priority: 'high'
+        }
+      );
+      
+      console.log(`📱 In-app notification result:`, notificationResult);
+      
+    } catch (notificationError) {
+      console.error(`❌ In-app notification error:`, notificationError);
+      notificationResult = { 
+        success: false, 
+        error: notificationError.message 
+      };
+    }
+    
+    // STEP 4: Log final results
+    if (emailResult && emailResult.success) {
+      console.log(`✅ Welcome email sent successfully to ${user.email}`);
+      if (emailResult.messageId) {
+        console.log(`📨 Email Message ID: ${emailResult.messageId}`);
+      }
+    } else {
+      console.error(`❌ Failed to send welcome email:`, emailResult?.error || 'Unknown error');
+    }
+    
+    const finalResult = {
+      success: (emailResult?.success || false) && (notificationResult?.success || false),
       email: emailResult,
-      notification: notificationResult
+      notification: notificationResult,
+      user: {
+        id: user._id,
+        email: user.email,
+        lichessUsername: user.lichessUsername
+      }
     };
     
+    console.log(`🏁 Welcome notification process completed:`, finalResult);
+    
+    return finalResult;
+    
   } catch (error) {
-    console.error('❌ Error sending welcome notification:', error);
-    return null;
+    console.error('❌ Critical error in welcome notification:', {
+      message: error.message,
+      stack: error.stack,
+      userId: userId
+    });
+    return { 
+      success: false, 
+      error: error.message,
+      userId: userId 
+    };
   }
 };
-
 
 // ==================== VERIFICATION NOTIFICATIONS ====================
 
