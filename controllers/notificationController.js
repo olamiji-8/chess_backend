@@ -862,13 +862,28 @@ exports.sendTestNotification = asyncHandler(async (req, res) => {
 
 // 👋 Welcome to 64SQURS
 // Trigger: When a user logs in for the first time using their Lichess ID
+// Fixed version of notifyUserWelcome function
 exports.notifyUserWelcome = async (userId) => {
   try {
     console.log(`🎯 Sending welcome notification to user: ${userId}`);
     
+    // STEP 1: Fetch the complete user object with email
+    const user = await User.findById(userId); // or however you fetch users in your app
+    
+    if (!user) {
+      console.error(`❌ User not found: ${userId}`);
+      return null;
+    }
+    
+    if (!user.email) {
+      console.error(`❌ User email not found for user: ${userId}`);
+      return null;
+    }
+    
+    console.log(`📧 Sending welcome email to: ${user.email}`);
+    
     const title = "👋 Welcome to 64SQURS";
     
-    // Enhanced welcome message with more engaging content
     const message = `Welcome to 64SQURS! 🎉
     
 You've successfully signed in using your Lichess ID. We're excited to have you join our growing community of chess enthusiasts!
@@ -881,28 +896,41 @@ Here's what you can do:
 
 Ready to make your first move? Let's get started!`;
     
-    // Create notification with enhanced options
-    const result = await exports.createNotification(
+    // STEP 2: Send email notification directly
+    const emailResult = await sendEmailNotification(
+      user,  // Pass the complete user object, not just userId
+      title,
+      message,
+      'system_message'
+    );
+    
+    // STEP 3: Create in-app notification
+    const notificationResult = await exports.createNotification(
       userId,
       title,
       message,
-      'system_message', // This matches your email template
-      null, // no tournament reference
-      null, // no additional data
+      'system_message',
+      null,
+      null,
       { 
-        sendEmail: true, 
+        sendEmail: false, // We already sent email above
         sendPush: true,
-        priority: 'high' // Mark as high priority
+        priority: 'high'
       }
     );
     
-    if (result) {
-      console.log(`✅ Welcome notification sent successfully to user ${userId}`);
+    if (emailResult.success) {
+      console.log(`✅ Welcome email sent successfully to ${user.email}`);
+      console.log(`📨 Email Message ID: ${emailResult.messageId}`);
     } else {
-      console.log(`❌ Failed to send welcome notification to user ${userId}`);
+      console.error(`❌ Failed to send welcome email: ${emailResult.error}`);
     }
     
-    return result;
+    return {
+      email: emailResult,
+      notification: notificationResult
+    };
+    
   } catch (error) {
     console.error('❌ Error sending welcome notification:', error);
     return null;
