@@ -69,7 +69,7 @@ router.use(protect);
 // @route   GET /api/notifications
 // @desc    Get user notifications with pagination and filtering
 // @access  Private
-router.get('/', getUserNotifications);
+router.get('/read', getUserNotifications);
 
 // @route   GET /api/notifications/stats
 // @desc    Get notification statistics
