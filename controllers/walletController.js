@@ -586,7 +586,14 @@ exports.verifyDeposit = asyncHandler(async (req, res) => {
 // @access  Private
 exports.initiateWithdrawal = asyncHandler(async (req, res) => {
   try {
-    const { amount, pin } = req.body;
+    const { 
+      amount, 
+      pin, 
+      accountNumber, 
+      bankCode, 
+      bankName, 
+      accountName 
+    } = req.body;
     
     // Check user authentication
     if (!req.user || !req.user._id) {
@@ -595,21 +602,33 @@ exports.initiateWithdrawal = asyncHandler(async (req, res) => {
     
     const userId = req.user._id || req.user.id;
     
+    // Validate required fields
+    if (!amount || !accountNumber || !bankCode || !bankName || !accountName) {
+      return res.status(400).json({ 
+        message: 'All fields are required: amount, account number, bank code, bank name, and account name' 
+      });
+    }
+    
     // Validate amount
-    if (!amount || isNaN(amount) || amount <= 0) {
+    if (isNaN(amount) || amount <= 0) {
       return res.status(400).json({ message: 'Please provide a valid amount' });
+    }
+    
+    // Minimum withdrawal amount
+    if (amount < 100) {
+      return res.status(400).json({ 
+        message: 'Minimum withdrawal amount is ₦100' 
+      });
     }
     
     // Validate PIN
     const pinVerification = await verifyUserPin(userId, pin);
-    
     if (!pinVerification.success) {
       return res.status(401).json({ message: pinVerification.message });
     }
     
-    // Get complete user data AFTER pin verification
+    // Get user data
     const user = await User.findById(userId);
-    
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
@@ -617,80 +636,121 @@ exports.initiateWithdrawal = asyncHandler(async (req, res) => {
     // Check wallet balance
     if (user.walletBalance < amount) {
       return res.status(400).json({ 
-        message: 'Insufficient wallet balance', 
+        message: 'Insufficient wallet balance',
         walletBalance: user.walletBalance,
         requestedAmount: amount
-      });
-    }
-    
-    // Check if bank details are provided
-    if (!user.bankDetails || !user.bankDetails.accountNumber || !user.bankDetails.bankName) {
-      return res.status(400).json({ message: 'Please update your bank details before withdrawal' });
-    }
-    
-    // Check if user is verified
-    if (!user.isVerified) {
-      return res.status(403).json({ message: 'Account verification is required before making withdrawals. Please verify your account first.' });
-    }
-    
-    // Check for existing pending withdrawals
-    const existingPendingWithdrawal = await Transaction.findOne({
-      user: userId,
-      type: 'withdrawal',
-      status: 'pending'
-    });
-    
-    if (existingPendingWithdrawal) {
-      return res.status(400).json({ 
-        message: 'You already have a pending withdrawal request. Please wait for approval before making another request.',
-        pendingAmount: existingPendingWithdrawal.amount,
-        reference: existingPendingWithdrawal.reference
       });
     }
     
     // Generate reference
     const reference = 'CHESS_WD_' + crypto.randomBytes(8).toString('hex');
     
-    // Create transaction record (PENDING - money stays in wallet)
+    // Create transaction record
     const transaction = await Transaction.create({
       user: userId,
       type: 'withdrawal',
       amount,
       reference,
-      status: 'pending', // Status remains pending until admin approval
+      status: 'processing',
       paymentMethod: 'bank_transfer',
       details: {
-        bankName: user.bankDetails.bankName,
-        accountNumber: user.bankDetails.accountNumber,
-        accountName: user.bankDetails.accountName || user.fullName,
+        bankName,
+        bankCode,
+        accountNumber,
+        accountName,
         requestedAt: new Date()
       }
     });
     
-    // DO NOT deduct from wallet balance yet - wait for admin approval
-    console.log(`Withdrawal request created: ${amount} naira for user ${userId}, reference: ${reference} - Awaiting admin approval`);
+    // Deduct amount from user's wallet
+    user.walletBalance -= amount;
+    await user.save();
     
-    res.status(200).json({
-      success: true,
-      message: 'Withdrawal request submitted successfully. Your request is pending admin approval.',
-      data: {
-        amount,
-        currentBalance: user.walletBalance, // Balance remains unchanged
-        reference,
-        status: 'pending',
-        estimatedProcessingTime: 'Pending admin approval, then 1-2 business days for processing'
-      }
-    });
+    try {
+      // Create transfer recipient in Paystack
+      const recipientResponse = await axios.post(
+        'https://api.paystack.co/transferrecipient',
+        {
+          type: 'nuban',
+          name: accountName,
+          account_number: accountNumber,
+          bank_code: bankCode,
+          currency: 'NGN'
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      const recipientCode = recipientResponse.data.data.recipient_code;
+      
+      // Initiate transfer
+      const transferResponse = await axios.post(
+        'https://api.paystack.co/transfer',
+        {
+          source: 'balance',
+          amount: amount * 100, // Convert to kobo
+          recipient: recipientCode,
+          reason: 'Wallet withdrawal',
+          reference: reference
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      // Update transaction with success
+      transaction.status = 'completed';
+      transaction.details.recipientCode = recipientCode;
+      transaction.details.transferCode = transferResponse.data.data.transfer_code;
+      await transaction.save();
+      
+      console.log(`Withdrawal successful: ₦${amount} to ${accountName} - Reference: ${reference}`);
+      
+      res.status(200).json({
+        success: true,
+        message: 'Withdrawal successful! Money has been sent to your bank account.',
+        data: {
+          amount,
+          newBalance: user.walletBalance,
+          reference,
+          accountName,
+          bankName,
+          status: 'completed'
+        }
+      });
+      
+    } catch (paystackError) {
+      // If Paystack fails, refund the user's wallet
+      user.walletBalance += amount;
+      await user.save();
+      
+      transaction.status = 'failed';
+      transaction.details.errorMessage = paystackError.response ? 
+        paystackError.response.data.message : paystackError.message;
+      await transaction.save();
+      
+      console.error('Paystack Transfer Error:', paystackError.response ? 
+        paystackError.response.data : paystackError.message);
+      
+      res.status(400).json({
+        success: false,
+        message: 'Withdrawal failed. Your wallet has been refunded.',
+        walletBalance: user.walletBalance
+      });
+    }
     
   } catch (error) {
-    console.error('Withdrawal Request Error:', {
-      message: error.message,
-      stack: error.stack,
-      body: req.body
-    });
+    console.error('Withdrawal Error:', error);
     res.status(500).json({
       success: false,
-      message: 'An unexpected error occurred while submitting withdrawal request'
+      message: 'An unexpected error occurred during withdrawal'
     });
   }
 });
