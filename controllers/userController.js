@@ -280,7 +280,14 @@ exports.getUserProfile = asyncHandler(async (req, res) => {
   // Use req.user which is set by the JWT authentication middleware
   const user = await User.findById(req.user._id)
     .populate('registeredTournaments', 'title startDate status')
-    .populate('createdTournaments', 'title startDate status');
+    .populate({
+      path: 'createdTournaments',
+      select: 'title startDate status organizer category banner rules startTime duration prizeType prizes entryFee fundingMethod participants tournamentLink',
+      populate: {
+        path: 'organizer',
+        select: 'fullName email profilePic phoneNumber lichessUsername isVerified walletBalance hasPin'
+      }
+    });
   
   if (!user) {
     return res.status(404).json({ message: 'User not found' });
@@ -303,7 +310,7 @@ exports.getUserProfile = asyncHandler(async (req, res) => {
       bankDetails: user.bankDetails,
       bankCode: bankCode, // Added bankCode explicitly
       registeredTournaments: user.registeredTournaments,
-      createdTournaments: user.createdTournaments,
+      createdTournaments: user.createdTournaments, // Now includes full tournament details with organizer info
       hasPin: user.hasPin,
     }
   });
