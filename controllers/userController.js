@@ -22,50 +22,50 @@ const TOKEN_EXPIRY = '7d'; // Token expires in 7 days
 // @desc    Register a new user
 // @route   POST /api/users/register
 // @access  Public
-// exports.registerUser = asyncHandler(async (req, res) => {
-//   const { fullName, email, password } = req.body;
+exports.registerUser = asyncHandler(async (req, res) => {
+  const { fullName, email, password } = req.body;
 
-//   // Check if user already exists
-//   const userExists = await User.findOne({ email });
+  // Check if user already exists
+  const userExists = await User.findOne({ email });
 
-//   if (userExists) {
-//     res.status(400);
-//     throw new Error('User already exists');
-//   }
+  if (userExists) {
+    res.status(400);
+    throw new Error('User already exists');
+  }
 
-//   // Generate default PIN for registration
-//   const defaultPin = Math.floor(1000 + Math.random() * 9000).toString();
-//   const salt = await bcrypt.genSalt(10);
-//   const hashedPin = await bcrypt.hash(defaultPin, salt);
+  // Generate default PIN for registration
+  const defaultPin = Math.floor(1000 + Math.random() * 9000).toString();
+  const salt = await bcrypt.genSalt(10);
+  const hashedPin = await bcrypt.hash(defaultPin, salt);
 
-//   // Create new user
-//   const user = await User.create({
-//     fullName,
-//     email,
-//     password,
-//     pin: hashedPin // Store the hashed default PIN
-//   });
+  // Create new user
+  const user = await User.create({
+    fullName,
+    email,
+    password,
+    pin: hashedPin // Store the hashed default PIN
+  });
 
-//   if (user) {
-//     // Generate JWT token
-//     const token = generateToken(user._id);
+  if (user) {
+    // Generate JWT token
+    const token = generateToken(user._id);
     
-//     res.status(201).json({
-//       success: true,
-//       data: {
-//         id: user._id,
-//         fullName: user.fullName,
-//         email: user.email,
-//         isVerified: user.isVerified,
-//         token
-//       },
-//       message: 'Registration successful. Please set your PIN for transactions.'
-//     });
-//   } else {
-//     res.status(400);
-//     throw new Error('Invalid user data');
-//   }
-// });
+    res.status(201).json({
+      success: true,
+      data: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        isVerified: user.isVerified,
+        token
+      },
+      message: 'Registration successful. Please set your PIN for transactions.'
+    });
+  } else {
+    res.status(400);
+    throw new Error('Invalid user data');
+  }
+});
 
 /**    
  * @desc    Create a new admin user
@@ -134,35 +134,35 @@ exports.createAdmin = asyncHandler(async (req, res) => {
 });
 
 
-// // @desc    Login user
-// // @route   POST /api/users/login
-// // @access  Public
-// exports.loginUser = asyncHandler(async (req, res) => {
-//   const { email, password } = req.body;
+// @desc    Login user
+// @route   POST /api/users/login
+// @access  Public
+exports.loginUser = asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
 
-//   // Find user by email
-//   const user = await User.findOne({ email }).select('+password');
+  // Find user by email
+  const user = await User.findOne({ email }).select('+password');
 
-//   if (!user || !(await user.matchPassword(password))) {
-//     res.status(401);
-//     throw new Error('Invalid email or password');
-//   }
+  if (!user || !(await user.matchPassword(password))) {
+    res.status(401);
+    throw new Error('Invalid email or password');
+  }
 
-//   // Generate JWT token
-//   const token = generateToken(user._id);
+  // Generate JWT token
+  const token = generateToken(user._id);
   
-//   res.status(200).json({
-//     success: true,
-//     data: {
-//       id: user._id,
-//       fullName: user.fullName,
-//       email: user.email,
-//       isVerified: user.isVerified,
-//       lichessUsername: user.lichessUsername,
-//       token
-//     }
-//   });
-// });
+  res.status(200).json({
+    success: true,
+    data: {
+      id: user._id,
+      fullName: user.fullName,
+      email: user.email,
+      isVerified: user.isVerified,
+      lichessUsername: user.lichessUsername,
+      token
+    }
+  });
+});
 
 // @desc    Logout user
 // @route   GET /api/users/logout
@@ -399,6 +399,64 @@ exports.handleCallback = async (req, res) => {
   }
 };
 
+// Optional: Add a method to refresh user email if needed
+exports.refreshUserEmail = asyncHandler(async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    
+    if (!user || !user.lichessAccessToken) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User not found or not linked to Lichess' 
+      });
+    }
+
+    // Try to get email from Lichess API
+    let updatedEmail = null;
+    try {
+      const emailRes = await axios.get("https://lichess.org/api/account/email", {
+        headers: { Authorization: `Bearer ${user.lichessAccessToken}` },
+        timeout: 5000
+      });
+
+      if (emailRes.data && emailRes.data.email) {
+        updatedEmail = emailRes.data.email;
+      }
+    } catch (emailError) {
+      console.log(`Could not fetch updated email:`, emailError.message);
+    }
+
+    if (updatedEmail && updatedEmail !== user.email) {
+      // Update user with new email
+      await User.findByIdAndUpdate(user._id, {
+        email: updatedEmail,
+        isVerified: true,
+        emailSource: 'lichess_api'
+      });
+
+      console.log(`Updated email for user ${user._id}: ${user.email} -> ${updatedEmail}`);
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Email updated successfully',
+        data: { email: updatedEmail }
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Email is already up to date',
+      data: { email: user.email }
+    });
+    
+  } catch (error) {
+    console.error('Error refreshing user email:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to refresh email'
+    });
+  }
+});
 
 exports.getUserProfile = asyncHandler(async (req, res) => {
   // Use req.user which is set by the JWT authentication middleware
