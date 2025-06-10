@@ -178,6 +178,7 @@ const generateToken = (userId) => {
 };
 
 // Redirect to Lichess OAuth with PKCE
+// Redirect to Lichess OAuth with PKCE - FIXED VERSION
 exports.loginWithLichess = (req, res) => {
   const pkce = generatePKCE();
   
