@@ -133,57 +133,6 @@ const sendEmailNotification = async (user, title, message, type) => {
           </div>
         `
       },
-      'transaction_success': {
-        subject: `Transaction Successful - ${title}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <div style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); padding: 20px; text-align: center;">
-              <h1 style="color: white; margin: 0;">✅ Transaction Successful</h1>
-            </div>
-            <div style="padding: 30px; background: #f9f9f9;">
-              <h2 style="color: #333;">${title}</h2>
-              <p style="color: #666; line-height: 1.6;">${message}</p>
-              <div style="margin-top: 30px; text-align: center;">
-                <a href="${process.env.FRONTEND_URL}/wallet" style="background: #11998e; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">View Wallet</a>
-              </div>
-            </div>
-          </div>
-        `
-      },
-      'transaction_failed': {
-        subject: `Transaction Failed - ${title}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <div style="background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%); padding: 20px; text-align: center;">
-              <h1 style="color: white; margin: 0;">❌ Transaction Failed</h1>
-            </div>
-            <div style="padding: 30px; background: #f9f9f9;">
-              <h2 style="color: #333;">${title}</h2>
-              <p style="color: #666; line-height: 1.6;">${message}</p>
-              <div style="margin-top: 30px; text-align: center;">
-                <a href="${process.env.FRONTEND_URL}/wallet" style="background: #ff416c; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">Try Again</a>
-              </div>
-            </div>
-          </div>
-        `
-      },
-      'account_verification': {
-        subject: `Account Verification - ${title}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; text-align: center;">
-              <h1 style="color: white; margin: 0;">🔐 Account Verification</h1>
-            </div>
-            <div style="padding: 30px; background: #f9f9f9;">
-              <h2 style="color: #333;">${title}</h2>
-              <p style="color: #666; line-height: 1.6;">${message}</p>
-              <div style="margin-top: 30px; text-align: center;">
-                <a href="${process.env.FRONTEND_URL}/verification" style="background: #667eea; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">View Verification</a>
-              </div>
-            </div>
-          </div>
-        `
-      },
       'wallet_update': {
         subject: `Wallet Update - ${title}`,
         html: `
@@ -660,109 +609,6 @@ exports.createNotification = async (userId, title, message, type, relatedId = nu
   }
 };
 
-// Enhanced bulk notifications with email and push - FIXED: Better error handling for push subscriptions
-exports.createBulkNotifications = async (userIds, title, message, type, relatedId = null, relatedModel = null, options = {}) => {
-  try {
-    // Get all users with their notification preferences
-    const users = await User.find({ _id: { $in: userIds } });
-    
-    const notifications = [];
-    const emailPromises = [];
-    const pushPromises = [];
-    
-    for (const user of users) {
-      // Create notification record
-      const notificationData = {
-        user: user._id,
-        title,
-        message,
-        type,
-        relatedId,
-        relatedModel,
-        emailSent: false,
-        pushSent: false
-      };
-      
-      notifications.push(notificationData);
-      
-      // Queue email notification
-      if (options.sendEmail !== false) {
-        emailPromises.push(
-          sendEmailNotification(user, title, message, type)
-            .then(result => ({ userId: user._id, ...result }))
-            .catch(error => ({ userId: user._id, success: false, error: error.message }))
-        );
-      }
-      
-      // Queue push notification - FIXED: Only add if user has valid push subscription
-      if (options.sendPush !== false && 
-          user.pushSubscription && 
-          user.pushSubscription.endpoint &&
-          typeof user.pushSubscription.endpoint === 'string' &&
-          user.pushSubscription.endpoint.trim() !== '') {
-        pushPromises.push(
-          sendPushNotification(user, title, message, type, relatedId)
-            .then(result => ({ userId: user._id, ...result }))
-            .catch(error => ({ userId: user._id, success: false, error: error.message }))
-        );
-      }
-    }
-    
-    // Create all notifications in database
-    const createdNotifications = await Notification.insertMany(notifications);
-    
-    // Send emails in parallel
-    if (emailPromises.length > 0) {
-      const emailResults = await Promise.allSettled(emailPromises);
-      
-      // Update notification records with email status
-      for (let i = 0; i < emailResults.length; i++) {
-        const result = emailResults[i];
-        if (result.status === 'fulfilled' && result.value) {
-          const { userId, success, error } = result.value;
-          const notificationIndex = users.findIndex(user => user._id.toString() === userId.toString());
-          if (notificationIndex >= 0 && createdNotifications[notificationIndex]) {
-            await Notification.findByIdAndUpdate(
-              createdNotifications[notificationIndex]._id,
-              { 
-                emailSent: success,
-                emailError: success ? null : error
-              }
-            );
-          }
-        }
-      }
-    }
-    
-    // Send push notifications in parallel
-    if (pushPromises.length > 0) {
-      const pushResults = await Promise.allSettled(pushPromises);
-      
-      // Update notification records with push status
-      for (let i = 0; i < pushResults.length; i++) {
-        const result = pushResults[i];
-        if (result.status === 'fulfilled' && result.value) {
-          const { userId, success, error } = result.value;
-          const notificationIndex = users.findIndex(user => user._id.toString() === userId.toString());
-          if (notificationIndex >= 0 && createdNotifications[notificationIndex]) {
-            await Notification.findByIdAndUpdate(
-              createdNotifications[notificationIndex]._id,
-              { 
-                pushSent: success,
-                pushError: success ? null : error
-              }
-            );
-          }
-        }
-      }
-    }
-    
-    return createdNotifications;
-  } catch (error) {
-    console.error('Error creating bulk notifications:', error);
-    return null;
-  }
-};
 
 // ==================== USER PREFERENCE MANAGEMENT ====================
 
@@ -838,29 +684,6 @@ exports.unsubscribeFromPush = asyncHandler(async (req, res) => {
   });
 });
 
-
-
-// ==================== NOTIFICATION TESTING ENDPOINTS ====================
-
-// @desc    Send test notification
-// @route   POST /api/notifications/test
-// @access  Private
-exports.sendTestNotification = asyncHandler(async (req, res) => {
-  const { type = 'system_message' } = req.body;
-  
-  const result = await exports.createNotification(
-    req.user.id,
-    'Test Notification',
-    'This is a test notification to verify email and push delivery.',
-    type
-  );
-  
-  res.status(200).json({
-    success: true,
-    message: 'Test notification sent',
-    data: result
-  });
-});
 
 // 👋 Welcome to 64SQURS - Enhanced with debugging
 // Trigger: When a user logs in for the first time using their Lichess ID
@@ -997,86 +820,6 @@ Ready to make your first move? Let's get started!`;
   }
 };
 
-// ==================== VERIFICATION NOTIFICATIONS ====================
-
-// Notify user when verification is submitted
-exports.notifyVerificationSubmitted = async (userId) => {
-  try {
-    const title = "Verification Submitted Successfully";
-    const message = "Your account verification documents have been submitted successfully. Our team will review your documents within 24-48 hours. You'll be notified once the review is complete.";
-    
-    return await exports.createNotification(
-      userId,
-      title,
-      message,
-      'account_verification'
-    );
-  } catch (error) {
-    console.error('Error sending verification submitted notification:', error);
-    return null;
-  }
-};
-
-// Notify user when verification is approved
-exports.notifyVerificationApproved = async (userId) => {
-  try {
-    const title = "Account Verification Approved! ✅";
-    const message = "Congratulations! Your account has been successfully verified. You now have access to all tournament features, withdrawals, and premium benefits on 64SQURS.";
-    
-    return await exports.createNotification(
-      userId,
-      title,
-      message,
-      'account_verification'
-    );
-  } catch (error) {
-    console.error('Error sending verification approved notification:', error);
-    return null;
-  }
-};
-
-// Notify user when verification is rejected
-exports.notifyVerificationRejected = async (userId, reason = '') => {
-  try {
-    const title = "Account Verification Needs Attention";
-    const message = `Your account verification was not approved. ${reason ? `Reason: ${reason}` : ''} Please review the requirements and submit new documents. Contact support if you need assistance.`;
-    
-    return await exports.createNotification(
-      userId,
-      title,
-      message,
-      'account_verification'
-    );
-  } catch (error) {
-    console.error('Error sending verification rejected notification:', error);
-    return null;
-  }
-};
-
-// Notify admins of new verification request
-exports.notifyAdminsNewVerification = async (userId, userName) => {
-  try {
-    const User = require('../models/User');
-    const admins = await User.find({ role: 'admin' });
-    const adminIds = admins.map(admin => admin._id);
-
-    if (adminIds.length === 0) return null;
-
-    const title = "New Verification Request";
-    const message = `${userName} has submitted new verification documents for review. Please check the admin panel to review and approve/reject the verification.`;
-    
-    return await exports.createBulkNotifications(
-      adminIds,
-      title,
-      message,
-      'system_message',
-      userId
-    );
-  } catch (error) {
-    console.error('Error notifying admins of new verification:', error);
-    return null;
-  }
-};
 
 // ==================== TOURNAMENT NOTIFICATIONS ====================
 
@@ -1289,136 +1032,6 @@ exports.notifyTournamentWinner = async (userId, tournamentId, tournamentTitle, p
   }
 };
 
-// Notify when tournament is cancelled
-exports.notifyTournamentCancelled = async (tournamentId, reason = '') => {
-  try {
-    const Tournament = require('../models/Tournament');
-    const tournament = await Tournament.findById(tournamentId).populate('participants');
-    
-    if (!tournament || tournament.participants.length === 0) {
-      return null;
-    }
-
-    const participantIds = tournament.participants.map(p => p._id);
-    const title = "Tournament Cancelled";
-    const message = `Unfortunately, "${tournament.title}" has been cancelled. ${reason ? `Reason: ${reason}` : ''} Any entry fees will be refunded to your wallet within 24 hours.`;
-    
-    return await exports.createBulkNotifications(
-      participantIds,
-      title,
-      message,
-      'system_message',
-      tournamentId,
-      'Tournament'
-    );
-  } catch (error) {
-    console.error('Error sending tournament cancelled notification:', error);
-    return null;
-  }
-};
-
-// ==================== TRANSACTION NOTIFICATIONS ====================
-
-// Notify successful transaction
-exports.notifyTransactionSuccess = async (userId, transactionId, amount, type = 'payment') => {
-  try {
-    const title = "Transaction Successful! ✅";
-    const message = `Your ${type} of ₦${amount.toLocaleString()} has been processed successfully. Your wallet has been updated accordingly.`;
-    
-    return await exports.createNotification(
-      userId,
-      title,
-      message,
-      'transaction_success',
-      transactionId,
-      'Transaction'
-    );
-  } catch (error) {
-    console.error('Error sending transaction success notification:', error);
-    return null;
-  }
-};
-
-// Notify failed transaction
-exports.notifyTransactionFailed = async (userId, transactionId, amount, type = 'payment', reason = '') => {
-  try {
-    const title = "Transaction Failed ❌";
-    const message = `Your ${type} of ₦${amount.toLocaleString()} could not be processed. ${reason ? `Reason: ${reason}` : ''} Please try again or contact support if the issue persists.`;
-    
-    return await exports.createNotification(
-      userId,
-      title,
-      message,
-      'transaction_failed',
-      transactionId,
-      'Transaction'
-    );
-  } catch (error) {
-    console.error('Error sending transaction failed notification:', error);
-    return null;
-  }
-};
-
-// Notify pending transaction
-exports.notifyTransactionPending = async (userId, transactionId, amount, type = 'payment') => {
-  try {
-    const title = "Transaction Pending ⏳";
-    const message = `Your ${type} of ₦${amount.toLocaleString()} is being processed. You'll be notified once the transaction is completed.`;
-    
-    return await exports.createNotification(
-      userId,
-      title,
-      message,
-      'transaction_success',
-      transactionId,
-      'Transaction'
-    );
-  } catch (error) {
-    console.error('Error sending transaction pending notification:', error);
-    return null;
-  }
-};
-
-// ==================== WALLET NOTIFICATIONS ====================
-
-// Notify wallet update
-exports.notifyWalletUpdate = async (userId, amount, type, balance) => {
-  try {
-    const isCredit = amount > 0;
-    const title = isCredit ? "Wallet Credited 💰" : "Wallet Debited 💸";
-    const amountText = isCredit ? `+₦${amount.toLocaleString()}` : `-₦${Math.abs(amount).toLocaleString()}`;
-    const message = `Your wallet has been ${isCredit ? 'credited' : 'debited'} with ${amountText}. Current balance: ₦${balance.toLocaleString()}.`;
-    
-    return await exports.createNotification(
-      userId,
-      title,
-      message,
-      'wallet_update'
-    );
-  } catch (error) {
-    console.error('Error sending wallet update notification:', error);
-    return null;
-  }
-};
-
-// Notify low balance
-exports.notifyLowBalance = async (userId, currentBalance, threshold = 1000) => {
-  try {
-    const title = "Low Wallet Balance ⚠️";
-    const message = `Your wallet balance is low (₦${currentBalance.toLocaleString()}). Add funds to continue participating in tournaments and enjoy uninterrupted gaming.`;
-    
-    return await exports.createNotification(
-      userId,
-      title,
-      message,
-      'wallet_update'
-    );
-  } catch (error) {
-    console.error('Error sending low balance notification:', error);
-    return null;
-  }
-};
-
 
 // 💸 Withdrawal Successful
 // Trigger: Immediately after a user's withdrawal request is processed and approved
@@ -1444,6 +1057,44 @@ exports.notifyWithdrawalSuccess = async (userId, withdrawalAmount, transactionId
     return null;
   }
 };
+
+// 💔 Withdrawal Failed Notification
+exports.notifyWithdrawalFailure = async (userId, withdrawalAmount, transactionId = null, reason = 'Unknown error') => {
+  try {
+    const title = `❌ Withdrawal of ₦${withdrawalAmount.toLocaleString()} Failed`;
+    const message = `Your withdrawal request of ₦${withdrawalAmount.toLocaleString()} could not be processed. Reason: ${reason}. Your wallet has been refunded. Please try again or contact support if the issue persists.`;
+    
+    // Create notification in database
+    const notification = await exports.createNotification(
+      userId,
+      title,
+      message,
+      'transaction_failed',
+      transactionId,
+      'Transaction'
+    );
+    
+    // Send push notification
+    const pushResult = await exports.sendPushToUser(userId, title, message, {
+      type: 'withdrawal_failed',
+      amount: withdrawalAmount,
+      transactionId: transactionId?.toString(),
+      reason,
+      url: `/transactions/${transactionId}` // Deep link to transaction details
+    });
+    
+    return {
+      notification,
+      pushResult,
+      success: true
+    };
+    
+  } catch (error) {
+    console.error('Error sending withdrawal failure notification:', error);
+    return { success: false, error: error.message };
+  }
+};
+
 
 // ==================== SYSTEM NOTIFICATIONS ====================
 
@@ -1478,84 +1129,5 @@ exports.sendSystemAnnouncement = async (title, message, userRole = 'all', option
   }
 };
 
-// ==================== SCHEDULED FUNCTIONS ====================
-
-// Function to send 5-minute tournament reminders (called by cron job)
-exports.sendFiveMinuteTournamentReminders = async () => {
-  try {
-    const Tournament = require('../models/Tournament');
-    const now = new Date();
-    const fiveMinutesFromNow = new Date(now.getTime() + 5 * 60 * 1000);
-    
-    // Find tournaments starting in exactly 5 minutes
-    const tournaments = await Tournament.find({
-      status: 'upcoming',
-      startDate: {
-        $gte: now,
-        $lte: fiveMinutesFromNow
-      }
-    });
-    
-    let sentCount = 0;
-    for (const tournament of tournaments) {
-      const result = await exports.notifyTournamentStartingInFiveMinutes(tournament._id);
-      if (result) sentCount++;
-    }
-    
-    console.log(`Sent 5-minute reminders for ${sentCount} tournaments`);
-    return sentCount;
-  } catch (error) {
-    console.error('Error sending 5-minute tournament reminders:', error);
-    return 0;
-  }
-};
-
-// Function to send general tournament reminders (called by cron job)
-exports.sendScheduledTournamentReminders = async (hoursBeforeStart = 1) => {
-  try {
-    const Tournament = require('../models/Tournament');
-    const now = new Date();
-    const reminderTime = new Date(now.getTime() + hoursBeforeStart * 60 * 60 * 1000);
-    
-    const tournaments = await Tournament.find({
-      status: 'upcoming',
-      startDate: {
-        $gte: now,
-        $lte: reminderTime
-      }
-    });
-    
-    let sentCount = 0;
-    for (const tournament of tournaments) {
-      const result = await exports.notifyTournamentReminder(tournament._id, hoursBeforeStart);
-      if (result) sentCount++;
-    }
-    
-    console.log(`Sent ${hoursBeforeStart}-hour reminders for ${sentCount} tournaments`);
-    return sentCount;
-  } catch (error) {
-    console.error('Error sending scheduled tournament reminders:', error);
-    return 0;
-  }
-};
-
-// Function to cleanup old notifications (called by cron job)
-exports.cleanupOldNotifications = async (daysOld = 30) => {
-  try {
-    const Notification = require('../models/Notification');
-    const cutoffDate = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000);
-    
-    const result = await Notification.deleteMany({
-      createdAt: { $lt: cutoffDate },
-      read: true
-    });
-    
-    console.log(`Cleaned up ${result.deletedCount} old notifications`);
-    return result;
-  } catch (error) {
-    console.error('Error cleaning up old notifications:', error);
-    return { deletedCount: 0 };
-  }
-};
 
 module.exports = exports;

@@ -6,6 +6,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const { verifyUserPin } = require('../utils/pinVerification');
 const { processSuccessfulPayment } = require('../utils/processSuccessfulPayment');
+const notificationController = require('./notificationController');
 
 // @desc    Initiate deposit to wallet with PIN verification and optional recipient transfer
 // @route   POST /api/wallet/deposit
@@ -581,180 +582,6 @@ exports.verifyDeposit = asyncHandler(async (req, res) => {
 });
 
 
-// @desc    Initiate withdrawal with PIN verification
-// @route   POST /api/wallet/withdraw
-// @access  Private
-// exports.initiateWithdrawal = asyncHandler(async (req, res) => {
-//   try {
-//     const { 
-//       amount, 
-//       pin, 
-//       accountNumber, 
-//       bankCode, 
-//       bankName, 
-//       accountName 
-//     } = req.body;
-    
-//     // Check user authentication
-//     if (!req.user || !req.user._id) {
-//       return res.status(401).json({ message: 'User authentication failed' });
-//     }
-    
-//     const userId = req.user._id || req.user.id;
-    
-//     // Validate required fields
-//     if (!amount || !accountNumber || !bankCode || !bankName || !accountName) {
-//       return res.status(400).json({ 
-//         message: 'All fields are required: amount, account number, bank code, bank name, and account name' 
-//       });
-//     }
-    
-//     // Validate amount
-//     if (isNaN(amount) || amount <= 0) {
-//       return res.status(400).json({ message: 'Please provide a valid amount' });
-//     }
-    
-//     // Minimum withdrawal amount
-//     if (amount < 100) {
-//       return res.status(400).json({ 
-//         message: 'Minimum withdrawal amount is ₦100' 
-//       });
-//     }
-    
-//     // Validate PIN
-//     const pinVerification = await verifyUserPin(userId, pin);
-//     if (!pinVerification.success) {
-//       return res.status(401).json({ message: pinVerification.message });
-//     }
-    
-//     // Get user data
-//     const user = await User.findById(userId);
-//     if (!user) {
-//       return res.status(404).json({ message: 'User not found' });
-//     }
-    
-//     // Check wallet balance
-//     if (user.walletBalance < amount) {
-//       return res.status(400).json({ 
-//         message: 'Insufficient wallet balance',
-//         walletBalance: user.walletBalance,
-//         requestedAmount: amount
-//       });
-//     }
-    
-//     // Generate reference
-//     const reference = 'CHESS_WD_' + crypto.randomBytes(8).toString('hex');
-    
-//     // Create transaction record
-//     const transaction = await Transaction.create({
-//       user: userId,
-//       type: 'withdrawal',
-//       amount,
-//       reference,
-//       status: 'pending',
-//       paymentMethod: 'bank_transfer',
-//       details: {
-//         bankName,
-//         bankCode,
-//         accountNumber,
-//         accountName,
-//         requestedAt: new Date()
-//       }
-//     });
-    
-//     // Deduct amount from user's wallet
-//     user.walletBalance -= amount;
-//     await user.save();
-    
-//     try {
-//       // Create transfer recipient in Paystack
-//       const recipientResponse = await axios.post(
-//         'https://api.paystack.co/transferrecipient',
-//         {
-//           type: 'nuban',
-//           name: accountName,
-//           account_number: accountNumber,
-//           bank_code: bankCode,
-//           currency: 'NGN'
-//         },
-//         {
-//           headers: {
-//             Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-//             'Content-Type': 'application/json'
-//           }
-//         }
-//       );
-      
-//       const recipientCode = recipientResponse.data.data.recipient_code;
-      
-//       // Initiate transfer
-//       const transferResponse = await axios.post(
-//         'https://api.paystack.co/transfer',
-//         {
-//           source: 'balance',
-//           amount: amount * 100, // Convert to kobo
-//           recipient: recipientCode,
-//           reason: 'Wallet withdrawal',
-//           reference: reference
-//         },
-//         {
-//           headers: {
-//             Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-//             'Content-Type': 'application/json'
-//           }
-//         }
-//       );
-      
-//       // Update transaction with success
-//       transaction.status = 'completed';
-//       transaction.details.recipientCode = recipientCode;
-//       transaction.details.transferCode = transferResponse.data.data.transfer_code;
-//       await transaction.save();
-      
-//       console.log(`Withdrawal successful: ₦${amount} to ${accountName} - Reference: ${reference}`);
-      
-//       res.status(200).json({
-//         success: true,
-//         message: 'Withdrawal successful! Money has been sent to your bank account.',
-//         data: {
-//           amount,
-//           newBalance: user.walletBalance,
-//           reference,
-//           accountName,
-//           bankName,
-//           status: 'completed'
-//         }
-//       });
-      
-//     } catch (paystackError) {
-//       // If Paystack fails, refund the user's wallet
-//       user.walletBalance += amount;
-//       await user.save();
-      
-//       transaction.status = 'failed';
-//       transaction.details.errorMessage = paystackError.response ? 
-//         paystackError.response.data.message : paystackError.message;
-//       await transaction.save();
-      
-//       console.error('Paystack Transfer Error:', paystackError.response ? 
-//         paystackError.response.data : paystackError.message);
-      
-//       res.status(400).json({
-//         success: false,
-//         message: 'Withdrawal failed. Your wallet has been refunded.',
-//         walletBalance: user.walletBalance
-//       });
-//     }
-    
-//   } catch (error) {
-//     console.error('Withdrawal Error:', error);
-//     res.status(500).json({
-//       success: false,
-//       message: 'An unexpected error occurred during withdrawal'
-//     });
-//   }
-// });
-
 
 exports.initiateWithdrawal = asyncHandler(async (req, res) => {
   try {
@@ -823,7 +650,7 @@ exports.initiateWithdrawal = asyncHandler(async (req, res) => {
       type: 'withdrawal',
       amount,
       reference,
-      status: 'pending', // Changed from 'processing' to 'pending'
+      status: 'pending',
       paymentMethod: 'bank_transfer',
       details: {
         bankName,
@@ -914,6 +741,19 @@ exports.initiateWithdrawal = asyncHandler(async (req, res) => {
       
       console.log(`Withdrawal successful: ₦${amount} to ${accountName} - Reference: ${reference}`);
       
+      // 🔥 SEND PUSH NOTIFICATION FOR SUCCESSFUL WITHDRAWAL
+      try {
+        await notificationController.notifyWithdrawalSuccess(
+          userId, 
+          amount, 
+          transaction._id
+        );
+        console.log(`Push notification sent for withdrawal success - User: ${userId}, Amount: ₦${amount}`);
+      } catch (notificationError) {
+        console.error('Failed to send withdrawal success notification:', notificationError);
+        // Don't fail the withdrawal if notification fails
+      }
+      
       res.status(200).json({
         success: true,
         message: 'Withdrawal successful! Money has been sent to your bank account.',
@@ -940,6 +780,19 @@ exports.initiateWithdrawal = asyncHandler(async (req, res) => {
       console.error('Paystack Transfer Error:', paystackError.response ? 
         paystackError.response.data : paystackError.message);
       
+      // 🔥 OPTIONAL: SEND PUSH NOTIFICATION FOR FAILED WITHDRAWAL
+      try {
+        await notificationController.notifyWithdrawalFailure(
+          userId, 
+          amount, 
+          transaction._id,
+          paystackError.response?.data?.message || 'Payment processing failed'
+        );
+        console.log(`Push notification sent for withdrawal failure - User: ${userId}, Amount: ₦${amount}`);
+      } catch (notificationError) {
+        console.error('Failed to send withdrawal failure notification:', notificationError);
+      }
+      
       res.status(400).json({
         success: false,
         message: 'Withdrawal failed. Your wallet has been refunded.',
@@ -955,7 +808,6 @@ exports.initiateWithdrawal = asyncHandler(async (req, res) => {
     });
   }
 });
-
 
 // @desc    Get all transaction history with pagination
 // @route   GET /api/wallet/transactions
