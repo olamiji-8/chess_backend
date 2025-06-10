@@ -893,6 +893,7 @@ cron.schedule('*/5 * * * *', async () => {
   }
 });
 
+
 // @desc    Distribute prizes to tournament winners
 // @route   POST /api/tournaments/:tournamentId/distribute-prizes
 // @access  Private (Organizer only)
@@ -1070,14 +1071,13 @@ exports.distributeTournamentPrizes = asyncHandler(async (req, res) => {
           }
         }], { session });
         
-        // Create notification for the winner
-        await createNotification(
+        // Use notifyTournamentWinner instead of createNotification
+        await notifyTournamentWinner(
           prize.userId,
-          'Congratulations! You won a prize!',
-          `You won ${prize.position} place in "${tournament.title}" and received ₦${prize.amount.toLocaleString()}!`,
-          'tournament_result',
           tournamentId,
-          'Tournament'
+          tournament.title,
+          prize.position,
+          prize.amount
         );
         
         results.push({
@@ -1137,6 +1137,7 @@ exports.distributeTournamentPrizes = asyncHandler(async (req, res) => {
   }
 });
 
+
 // @desc    Get tournament participants for prize distribution
 // @route   GET /api/tournaments/:tournamentId/participants
 // @access  Private (Organizer only)
@@ -1191,25 +1192,4 @@ exports.getTournamentParticipants = asyncHandler(async (req, res) => {
   }
 });
 
-// Helper function to create notifications (you might need to adjust this based on your notification system)
-const createNotification = async (userId, title, message, type, relatedId, relatedModel) => {
-  try {
-    const notification = await Notification.create({
-      user: userId,
-      title,
-      message,
-      type,
-      relatedId,
-      relatedModel
-    });
-    
-    // You can add push notification logic here if needed
-    console.log('Notification created:', notification._id);
-    
-    return notification;
-  } catch (error) {
-    console.error('Error creating notification:', error);
-    // Don't throw error as notification failure shouldn't stop prize distribution
-  }
-};
 
