@@ -178,7 +178,6 @@ const generateToken = (userId) => {
 };
 
 // Redirect to Lichess OAuth with PKCE
-// Redirect to Lichess OAuth with PKCE - FIXED VERSION
 exports.loginWithLichess = (req, res) => {
   const pkce = generatePKCE();
   
@@ -190,13 +189,14 @@ exports.loginWithLichess = (req, res) => {
     maxAge: 10 * 60 * 1000 // 10 minutes
   });
   
-  // 🔥 FIXED: Added email:read scope to access user's email
-  const authUrl = `https://lichess.org/oauth?response_type=code&client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&code_challenge_method=S256&code_challenge=${pkce.codeChallenge}&scope=preference:read email:read`;
+  const authUrl = `https://lichess.org/oauth?response_type=code&client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&code_challenge_method=S256&code_challenge=${pkce.codeChallenge}&scope=preference:read`;
 
   console.log('Redirecting to:', authUrl);
   res.redirect(authUrl);
 };
 
+// Handle callback from Lichess
+// Enhanced Lichess callback with instant welcome notification
 exports.handleCallback = async (req, res) => {
   try {
     const { code } = req.query;
@@ -217,7 +217,7 @@ exports.handleCallback = async (req, res) => {
 
     const tokenResponse = await axios.post("https://lichess.org/api/token", params, {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      timeout: 10000 // Increased timeout
+      timeout: 5000
     });
 
     const accessToken = tokenResponse.data.access_token;
@@ -228,81 +228,21 @@ exports.handleCallback = async (req, res) => {
     // Fetch user details from Lichess
     const userRes = await axios.get("https://lichess.org/api/account", {
       headers: { Authorization: `Bearer ${accessToken}` },
-      timeout: 10000
+      timeout: 5000
     });
 
     const lichessUserData = userRes.data;
     console.log(`📊 Lichess user data received:`, {
       username: lichessUserData.username,
-      hasEmailInProfile: !!lichessUserData.email
+      email: lichessUserData.email || 'NOT PROVIDED',
+      profile: lichessUserData.profile || 'NO PROFILE'
     });
 
-    const { username } = lichessUserData;
-    let userEmail = null;
-    let emailFromDedicatedEndpoint = false;
+    const { username, email: lichessEmail } = lichessUserData;
 
-    // 🔥 IMPROVED: Enhanced email fetching with proper error handling
-    try {
-      console.log(`📧 Attempting to fetch email from dedicated endpoint with email:read scope...`);
-      const emailRes = await axios.get("https://lichess.org/api/account/email", {
-        headers: { 
-          Authorization: `Bearer ${accessToken}`,
-          'User-Agent': 'Your-App-Name/1.0' // Good practice to identify your app
-        },
-        timeout: 10000
-      });
-
-      console.log(`📧 Email endpoint response:`, emailRes.data);
-
-      if (emailRes.data && emailRes.data.email) {
-        userEmail = emailRes.data.email;
-        emailFromDedicatedEndpoint = true;
-        console.log(`✅ Email successfully retrieved from dedicated endpoint: ${userEmail}`);
-      } else {
-        console.log(`⚠️ Email endpoint returned empty or invalid response:`, emailRes.data);
-      }
-    } catch (emailError) {
-      console.log(`⚠️ Could not fetch email from dedicated endpoint:`, {
-        status: emailError.response?.status,
-        statusText: emailError.response?.statusText,
-        data: emailError.response?.data,
-        message: emailError.message
-      });
-      
-      // 🔥 ADDED: Specific error handling for common issues
-      if (emailError.response?.status === 401) {
-        console.error(`❌ CRITICAL: Unauthorized access to email endpoint. Check if email:read scope is properly granted.`);
-      } else if (emailError.response?.status === 403) {
-        console.error(`❌ CRITICAL: Forbidden access to email endpoint. User may not have email visibility enabled.`);
-      }
-    }
-
-    // Fallback to profile email if dedicated endpoint failed
-    if (!userEmail && lichessUserData.email) {
-      userEmail = lichessUserData.email;
-      console.log(`📧 Using email from profile: ${userEmail}`);
-    }
-
-    // 🔥 IMPROVED: Better handling of missing email
-    if (!userEmail) {
-      console.log(`❌ No email available from any source. This will cause issues with wallet functionality.`);
-      
-      // Option 1: Redirect to profile completion page
-      return res.redirect(`${FRONTEND_URL}/complete-profile?error=no_email&username=${username}`);
-      
-      // Option 2: Use temporary email but flag the account (uncomment if you prefer this approach)
-      /*
-      userEmail = `${username}@lichess.temp`;
-      console.log(`📧 Using temporary email: ${userEmail}`);
-      */
-    }
-
-    console.log(`📧 Final email decision:`, {
-      email: userEmail,
-      source: emailFromDedicatedEndpoint ? 'dedicated_endpoint' : 
-              lichessUserData.email ? 'profile' : 'temporary',
-      isVerified: emailFromDedicatedEndpoint || !!lichessUserData.email
-    });
+    // Handle missing email from Lichess
+    const userEmail = lichessEmail || `${username}@lichess.temp`;
+    console.log(`📧 Using email: ${userEmail} (Original: ${lichessEmail || 'none'})`);
 
     // Check if this is a new user
     const existingUser = await User.findOne({
@@ -315,7 +255,7 @@ exports.handleCallback = async (req, res) => {
     const isNewUser = !existingUser;
     console.log(`👤 User status: ${isNewUser ? 'NEW USER' : 'EXISTING USER'}`);
 
-    // 🔥 IMPROVED: Enhanced user creation/update logic
+    // Create/update user with better email handling
     const user = await User.findOneAndUpdate(
       {
         $or: [
@@ -328,20 +268,15 @@ exports.handleCallback = async (req, res) => {
           fullName: username,
           email: userEmail,
           password: await bcrypt.hash(crypto.randomBytes(20).toString("hex"), 10),
-          isVerified: emailFromDedicatedEndpoint || !!lichessUserData.email,
+          isVerified: lichessEmail ? true : false, // Only verify if real email provided
           isFirstLogin: true,
-          emailSource: emailFromDedicatedEndpoint ? 'lichess_api' : 
-                      lichessUserData.email ? 'lichess_profile' : 'temporary'
+          lichessHasEmail: !!lichessEmail // Track if Lichess provided email
         },
         $set: {
           lichessUsername: username,
           lichessAccessToken: accessToken,
-          // 🔥 IMPROVED: Only update email if we got a real one
-          ...(userEmail && userEmail !== `${username}@lichess.temp` && { 
-            email: userEmail, 
-            isVerified: emailFromDedicatedEndpoint || !!lichessUserData.email,
-            emailSource: emailFromDedicatedEndpoint ? 'lichess_api' : 'lichess_profile'
-          })
+          // Update email only if Lichess provides a real one
+          ...(lichessEmail && { email: lichessEmail, isVerified: true })
         }
       },
       { upsert: true, new: true }
@@ -352,26 +287,30 @@ exports.handleCallback = async (req, res) => {
       email: user.email,
       lichessUsername: user.lichessUsername,
       isVerified: user.isVerified,
-      emailSource: user.emailSource
+      isFirstLogin: user.isFirstLogin,
+      lichessHasEmail: user.lichessHasEmail
     });
 
-    // 🔥 IMPROVED: Only send welcome notification if we have a real email
-    if ((isNewUser || user.isFirstLogin) && user.email && !user.email.includes('@lichess.temp')) {
+    // 🎉 Send INSTANT welcome notification for ALL new users or first-time logins
+    if (isNewUser || user.isFirstLogin) {
       try {
-        console.log(`🚀 Triggering welcome notification for user: ${user._id}`);
+        console.log(`🚀 Triggering INSTANT welcome notification for user: ${user._id}`);
         
+        // Use notifyUserWelcome instead of the manual notification creation
         const welcomeResult = await notifyUserWelcome(user._id);
-        console.log(`📨 Welcome notification result:`, welcomeResult);
+        console.log(`📨 Instant welcome notification result:`, welcomeResult);
         
+        // Update the flag to prevent future welcome notifications
         if (user.isFirstLogin) {
           await User.findByIdAndUpdate(user._id, { isFirstLogin: false });
           console.log(`✅ Updated isFirstLogin flag for user: ${user._id}`);
         }
       } catch (error) {
-        console.error('❌ Failed to send welcome notification:', error);
+        console.error('❌ Failed to send instant welcome notification:', error);
+        // Don't block the login process, just log the error
       }
     } else {
-      console.log(`ℹ️ Skipping welcome notification - ${!user.email ? 'no email' : 'temp email or returning user'}`);
+      console.log(`ℹ️ Skipping welcome notification - returning user: ${username}`);
     }
 
     // Clear the code verifier cookie
@@ -379,11 +318,6 @@ exports.handleCallback = async (req, res) => {
 
     // Generate JWT token
     const token = generateToken(user._id);
-
-    // 🔥 IMPROVED: Handle users with temporary emails
-    if (user.email && user.email.includes('@lichess.temp')) {
-      return res.redirect(`${FRONTEND_URL}/complete-profile?token=${token}&needs_email=true`);
-    }
 
     // Redirect to frontend with JWT token
     return res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}`);
@@ -398,65 +332,6 @@ exports.handleCallback = async (req, res) => {
     return res.redirect(`${FRONTEND_URL}/login?error=auth_failed&message=${encodeURIComponent(error.message)}`);
   }
 };
-
-// Optional: Add a method to refresh user email if needed
-exports.refreshUserEmail = asyncHandler(async (req, res) => {
-  try {
-    const user = await User.findById(req.user._id);
-    
-    if (!user || !user.lichessAccessToken) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'User not found or not linked to Lichess' 
-      });
-    }
-
-    // Try to get email from Lichess API
-    let updatedEmail = null;
-    try {
-      const emailRes = await axios.get("https://lichess.org/api/account/email", {
-        headers: { Authorization: `Bearer ${user.lichessAccessToken}` },
-        timeout: 5000
-      });
-
-      if (emailRes.data && emailRes.data.email) {
-        updatedEmail = emailRes.data.email;
-      }
-    } catch (emailError) {
-      console.log(`Could not fetch updated email:`, emailError.message);
-    }
-
-    if (updatedEmail && updatedEmail !== user.email) {
-      // Update user with new email
-      await User.findByIdAndUpdate(user._id, {
-        email: updatedEmail,
-        isVerified: true,
-        emailSource: 'lichess_api'
-      });
-
-      console.log(`Updated email for user ${user._id}: ${user.email} -> ${updatedEmail}`);
-      
-      return res.status(200).json({
-        success: true,
-        message: 'Email updated successfully',
-        data: { email: updatedEmail }
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: 'Email is already up to date',
-      data: { email: user.email }
-    });
-    
-  } catch (error) {
-    console.error('Error refreshing user email:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to refresh email'
-    });
-  }
-});
 
 exports.getUserProfile = asyncHandler(async (req, res) => {
   // Use req.user which is set by the JWT authentication middleware
