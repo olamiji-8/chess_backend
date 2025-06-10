@@ -838,6 +838,8 @@ exports.unsubscribeFromPush = asyncHandler(async (req, res) => {
   });
 });
 
+
+
 // ==================== NOTIFICATION TESTING ENDPOINTS ====================
 
 // @desc    Send test notification
@@ -864,9 +866,9 @@ exports.sendTestNotification = asyncHandler(async (req, res) => {
 // Trigger: When a user logs in for the first time using their Lichess ID
 exports.notifyUserWelcome = async (userId) => {
   try {
-    console.log(`🎯 Starting welcome notification process for user: ${userId}`);
+    console.log(`🎯 Starting enhanced welcome notification process for user: ${userId}`);
     
-    // STEP 1: Fetch the complete user object with email
+    // STEP 1: Fetch the complete user object
     const user = await User.findById(userId);
     
     if (!user) {
@@ -874,69 +876,27 @@ exports.notifyUserWelcome = async (userId) => {
       return { success: false, error: 'User not found' };
     }
     
-    // DEBUG: Log the complete user object (remove sensitive data)
     console.log(`👤 User found:`, {
       id: user._id,
       fullName: user.fullName,
       email: user.email,
       lichessUsername: user.lichessUsername,
-      isVerified: user.isVerified,
-      isFirstLogin: user.isFirstLogin
+      pushSubscriptions: user.pushSubscriptions?.length || 0
     });
     
-    if (!user.email) {
-      console.error(`❌ User email not found for user: ${userId}`);
-      console.log(`📧 Email field value:`, user.email);
-      return { success: false, error: 'User email not found' };
-    }
+    const title = "🎉 Welcome to 64SQURS!";
+    const message = `Welcome ${user.lichessUsername || user.fullName}! You've successfully joined 64SQURS. Ready to dominate the chess world? 🏆`;
     
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(user.email)) {
-      console.error(`❌ Invalid email format: ${user.email}`);
-      return { success: false, error: 'Invalid email format' };
-    }
+    // STEP 2: Send IMMEDIATE push notification (highest priority)
+    console.log(`🚀 Sending immediate push notification...`);
+    const pushResult = await sendImmediatePushNotification(userId, title, message, {
+      priority: 'high',
+      requireInteraction: true
+    });
     
-    console.log(`📧 Sending welcome email to: ${user.email}`);
+    console.log(`📱 Immediate push result:`, pushResult);
     
-    const title = "👋 Welcome to 64SQURS";
-    
-    const message = `Welcome to 64SQURS! 🎉
-    
-You've successfully signed in using your Lichess ID. We're excited to have you join our growing community of chess enthusiasts!
-
-Here's what you can do:
-• 🏆 Explore and join exciting tournaments
-• 📊 Track your chess progress and statistics  
-• 🤝 Connect with fellow chess players
-• 🎯 Compete for prizes and recognition
-
-Ready to make your first move? Let's get started!`;
-    
-    // STEP 2: Send email notification with enhanced error handling
-    console.log(`📨 Calling sendEmailNotification...`);
-    let emailResult;
-    
-    try {
-      emailResult = await sendEmailNotification(
-        user,  // Pass the complete user object
-        title,
-        message,
-        'system_message'
-      );
-      
-      console.log(`📨 Email service response:`, emailResult);
-      
-    } catch (emailError) {
-      console.error(`❌ Email service error:`, emailError);
-      emailResult = { 
-        success: false, 
-        error: emailError.message,
-        stack: emailError.stack 
-      };
-    }
-    
-    // STEP 3: Create in-app notification
+    // STEP 3: Create in-app notification (secondary)
     console.log(`📱 Creating in-app notification...`);
     let notificationResult;
     
@@ -945,13 +905,14 @@ Ready to make your first move? Let's get started!`;
         userId,
         title,
         message,
-        'system_message',
+        'welcome',
         null,
         null,
         { 
-          sendEmail: false, // We already sent email above
-          sendPush: true,
-          priority: 'high'
+          sendEmail: false, // Skip email for immediate notification
+          sendPush: false,  // We already sent push above
+          priority: 'high',
+          requireInteraction: true
         }
       );
       
@@ -965,33 +926,65 @@ Ready to make your first move? Let's get started!`;
       };
     }
     
-    // STEP 4: Log final results
-    if (emailResult && emailResult.success) {
-      console.log(`✅ Welcome email sent successfully to ${user.email}`);
-      if (emailResult.messageId) {
-        console.log(`📨 Email Message ID: ${emailResult.messageId}`);
+    // STEP 4: Send email notification (optional, can be delayed)
+    let emailResult = { success: true, skipped: true };
+    
+    if (user.email && user.email.includes('@') && !user.email.includes('@lichess.temp')) {
+      console.log(`📧 Sending welcome email to: ${user.email}`);
+      
+      const emailMessage = `Welcome to 64SQURS! 🎉
+      
+You've successfully signed in using your Lichess ID. We're excited to have you join our growing community of chess enthusiasts!
+
+Here's what you can do:
+• 🏆 Explore and join exciting tournaments
+• 📊 Track your chess progress and statistics  
+• 🤝 Connect with fellow chess players
+• 🎯 Compete for prizes and recognition
+
+Ready to make your first move? Let's get started!`;
+      
+      try {
+        emailResult = await sendEmailNotification(
+          user,
+          title,
+          emailMessage,
+          'welcome'
+        );
+        console.log(`📧 Email result:`, emailResult);
+      } catch (emailError) {
+        console.error(`❌ Email error:`, emailError);
+        emailResult = { success: false, error: emailError.message };
       }
-    } else {
-      console.error(`❌ Failed to send welcome email:`, emailResult?.error || 'Unknown error');
     }
     
+    // STEP 5: Return comprehensive results
     const finalResult = {
-      success: (emailResult?.success || false) && (notificationResult?.success || false),
+      success: pushResult.success || notificationResult?.success || false,
+      immediate: {
+        push: pushResult,
+        notification: notificationResult
+      },
       email: emailResult,
-      notification: notificationResult,
       user: {
         id: user._id,
         email: user.email,
-        lichessUsername: user.lichessUsername
+        lichessUsername: user.lichessUsername,
+        pushSubscriptions: user.pushSubscriptions?.length || 0
+      },
+      summary: {
+        pushSent: pushResult.sent || false,
+        notificationCreated: notificationResult?.success || false,
+        emailSent: emailResult.success && !emailResult.skipped
       }
     };
     
-    console.log(`🏁 Welcome notification process completed:`, finalResult);
+    console.log(`🏁 Enhanced welcome notification completed:`, finalResult.summary);
     
     return finalResult;
     
   } catch (error) {
-    console.error('❌ Critical error in welcome notification:', {
+    console.error('❌ Critical error in enhanced welcome notification:', {
       message: error.message,
       stack: error.stack,
       userId: userId

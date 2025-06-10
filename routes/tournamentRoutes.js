@@ -6,7 +6,9 @@ const {
   getTournament,
   registerForTournament,
   checkTournamentRegistration,
-  updateTournamentStatus
+  updateTournamentStatus,
+  getTournamentParticipants,
+  distributeTournamentPrizes
 } = require('../controllers/tournamentController');
 const { protect } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
@@ -20,5 +22,10 @@ router.post('/', protect, upload.single('banner'), createTournament);
 router.get('/:id/registration-check', protect, checkTournamentRegistration);
 router.post('/:id/register', protect, registerForTournament);
 router.put('/:id/status', protect, updateTournamentStatus);
+
+router.get('/:tournamentId/participants', protect, getTournamentParticipants);
+
+router.post('/:tournamentId/distribute-prizes', protect, distributeTournamentPrizes);
+
 
 module.exports = router;

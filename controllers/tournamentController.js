@@ -892,3 +892,324 @@ cron.schedule('*/5 * * * *', async () => {
     console.error('Error in tournament status update cron job:', error);
   }
 });
+
+// @desc    Distribute prizes to tournament winners
+// @route   POST /api/tournaments/:tournamentId/distribute-prizes
+// @access  Private (Organizer only)
+exports.distributeTournamentPrizes = asyncHandler(async (req, res) => {
+  try {
+    const { tournamentId } = req.params;
+    const { prizeDistribution } = req.body; // Array of { userId, position, customAmount (optional) }
+    
+    console.log('Prize distribution request:', JSON.stringify(req.body, null, 2));
+    
+    // Validate request body
+    if (!prizeDistribution || !Array.isArray(prizeDistribution) || prizeDistribution.length === 0) {
+      return res.status(400).json({
+        message: 'Prize distribution data is required and must be an array'
+      });
+    }
+    
+    // Find tournament and verify organizer
+    const tournament = await Tournament.findById(tournamentId).populate('organizer participants');
+    if (!tournament) {
+      return res.status(404).json({ message: 'Tournament not found' });
+    }
+    
+    // Check if user is the organizer
+    if (tournament.organizer._id.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'Only tournament organizer can distribute prizes' });
+    }
+    
+    // Check if tournament is completed
+    if (tournament.status !== 'completed') {
+      return res.status(400).json({ 
+        message: 'Tournament must be completed before distributing prizes',
+        currentStatus: tournament.status
+      });
+    }
+    
+    // Check if prizes have already been distributed
+    const existingPrizePayouts = await Transaction.find({
+      tournament: tournamentId,
+      type: 'prize_payout',
+      status: 'completed'
+    });
+    
+    if (existingPrizePayouts.length > 0) {
+      return res.status(400).json({ 
+        message: 'Prizes have already been distributed for this tournament' 
+      });
+    }
+    
+    // Validate all users in prize distribution are tournament participants
+    const participantIds = tournament.participants.map(p => p._id.toString());
+    const invalidUsers = prizeDistribution.filter(prize => 
+      !participantIds.includes(prize.userId)
+    );
+    
+    if (invalidUsers.length > 0) {
+      return res.status(400).json({
+        message: 'Some users in prize distribution are not tournament participants',
+        invalidUsers: invalidUsers.map(u => u.userId)
+      });
+    }
+    
+    // Calculate prize amounts based on tournament prize structure
+    const calculatedPrizes = [];
+    let totalDistributedAmount = 0;
+    
+    for (const prize of prizeDistribution) {
+      let prizeAmount = 0;
+      const position = prize.position; // e.g., '1st', '2nd', '3rd', etc.
+      
+      // Calculate prize based on tournament prize type
+      if (tournament.prizeType === 'fixed') {
+        if (tournament.prizes.fixed[position]) {
+          prizeAmount = tournament.prizes.fixed[position];
+        } else {
+          // Handle additional positions
+          const additionalPrize = tournament.prizes.fixed.additional?.find(
+            ap => ap.position.toString() === position.replace(/\D/g, '')
+          );
+          prizeAmount = additionalPrize ? additionalPrize.amount : 0;
+        }
+      } else if (tournament.prizeType === 'percentage') {
+        const basePrizePool = tournament.prizes.percentage.basePrizePool || 0;
+        let percentage = 0;
+        
+        if (tournament.prizes.percentage[position]) {
+          percentage = tournament.prizes.percentage[position];
+        } else {
+          // Handle additional positions
+          const additionalPrize = tournament.prizes.percentage.additional?.find(
+            ap => ap.position.toString() === position.replace(/\D/g, '')
+          );
+          percentage = additionalPrize ? additionalPrize.percentage : 0;
+        }
+        
+        prizeAmount = (basePrizePool * percentage) / 100;
+      } else if (tournament.prizeType === 'special') {
+        // For special prizes, find matching category
+        const specialPrize = tournament.prizes.special.specialPrizes?.find(
+          sp => sp.category === position || sp.category.toLowerCase().includes(position.toLowerCase())
+        );
+        
+        if (specialPrize) {
+          if (tournament.prizes.special.isFixed || !specialPrize.isPercentage) {
+            prizeAmount = specialPrize.amount;
+          } else {
+            // Percentage-based special prize
+            const basePrizePool = tournament.prizes.special.basePrizePool || 0;
+            prizeAmount = (basePrizePool * specialPrize.amount) / 100;
+          }
+        }
+      }
+      
+      // Use custom amount if provided (for flexibility)
+      if (prize.customAmount && prize.customAmount > 0) {
+        prizeAmount = prize.customAmount;
+      }
+      
+      if (prizeAmount <= 0) {
+        return res.status(400).json({
+          message: `Invalid prize amount for position ${position}`,
+          userId: prize.userId,
+          position: position
+        });
+      }
+      
+      calculatedPrizes.push({
+        userId: prize.userId,
+        position: position,
+        amount: prizeAmount
+      });
+      
+      totalDistributedAmount += prizeAmount;
+    }
+    
+    console.log('Calculated prizes:', calculatedPrizes);
+    console.log('Total amount to distribute:', totalDistributedAmount);
+    
+    // Start database transaction for atomic operations
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    
+    try {
+      const results = [];
+      
+      for (const prize of calculatedPrizes) {
+        // Find the user
+        const user = await User.findById(prize.userId).session(session);
+        if (!user) {
+          throw new Error(`User not found: ${prize.userId}`);
+        }
+        
+        // Update user wallet balance
+        user.walletBalance += prize.amount;
+        await user.save({ session });
+        
+        // Create transaction record
+        const transactionReference = `PRIZE-${tournamentId.slice(-8)}-${prize.userId.slice(-8)}-${Date.now()}`;
+        
+        const transaction = await Transaction.create([{
+          user: prize.userId,
+          tournament: tournamentId,
+          type: 'prize_payout',
+          amount: prize.amount,
+          reference: transactionReference,
+          paymentMethod: 'wallet',
+          status: 'completed',
+          details: {
+            position: prize.position,
+            tournamentTitle: tournament.title
+          },
+          metadata: {
+            distributedBy: req.user.id,
+            distributionDate: new Date()
+          }
+        }], { session });
+        
+        // Create notification for the winner
+        await createNotification(
+          prize.userId,
+          'Congratulations! You won a prize!',
+          `You won ${prize.position} place in "${tournament.title}" and received ₦${prize.amount.toLocaleString()}!`,
+          'tournament_result',
+          tournamentId,
+          'Tournament'
+        );
+        
+        results.push({
+          userId: prize.userId,
+          userName: user.fullName,
+          position: prize.position,
+          amount: prize.amount,
+          transactionId: transaction[0]._id,
+          newWalletBalance: user.walletBalance
+        });
+      }
+      
+      // Update tournament status to indicate prizes have been distributed
+      await Tournament.findByIdAndUpdate(
+        tournamentId,
+        { 
+          $set: { 
+            'metadata.prizesDistributed': true,
+            'metadata.prizeDistributionDate': new Date(),
+            'metadata.distributedBy': req.user.id
+          }
+        },
+        { session }
+      );
+      
+      // Commit the transaction
+      await session.commitTransaction();
+      
+      console.log('Prize distribution successful:', results);
+      
+      res.status(200).json({
+        success: true,
+        message: 'Prizes distributed successfully',
+        data: {
+          tournamentId,
+          tournamentTitle: tournament.title,
+          totalDistributed: totalDistributedAmount,
+          winners: results,
+          distributionDate: new Date()
+        }
+      });
+      
+    } catch (transactionError) {
+      // Rollback the transaction
+      await session.abortTransaction();
+      throw transactionError;
+    } finally {
+      session.endSession();
+    }
+    
+  } catch (error) {
+    console.error('Prize distribution error:', error);
+    res.status(500).json({
+      message: 'Error distributing prizes',
+      error: error.message
+    });
+  }
+});
+
+// @desc    Get tournament participants for prize distribution
+// @route   GET /api/tournaments/:tournamentId/participants
+// @access  Private (Organizer only)
+exports.getTournamentParticipants = asyncHandler(async (req, res) => {
+  try {
+    const { tournamentId } = req.params;
+    
+    const tournament = await Tournament.findById(tournamentId)
+      .populate('participants', 'fullName email profilePic lichessUsername')
+      .populate('organizer', 'fullName email');
+    
+    if (!tournament) {
+      return res.status(404).json({ message: 'Tournament not found' });
+    }
+    
+    // Check if user is the organizer
+    if (tournament.organizer._id.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'Only tournament organizer can view participants' });
+    }
+    
+    // Get prize structure for reference
+    const prizeStructure = {};
+    if (tournament.prizeType === 'fixed') {
+      prizeStructure.fixed = tournament.prizes.fixed;
+    } else if (tournament.prizeType === 'percentage') {
+      prizeStructure.percentage = tournament.prizes.percentage;
+    } else if (tournament.prizeType === 'special') {
+      prizeStructure.special = tournament.prizes.special;
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        tournament: {
+          id: tournament._id,
+          title: tournament.title,
+          status: tournament.status,
+          prizeType: tournament.prizeType,
+          prizeStructure
+        },
+        participants: tournament.participants,
+        totalParticipants: tournament.participants.length
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error fetching tournament participants:', error);
+    res.status(500).json({
+      message: 'Error fetching tournament participants',
+      error: error.message
+    });
+  }
+});
+
+// Helper function to create notifications (you might need to adjust this based on your notification system)
+const createNotification = async (userId, title, message, type, relatedId, relatedModel) => {
+  try {
+    const notification = await Notification.create({
+      user: userId,
+      title,
+      message,
+      type,
+      relatedId,
+      relatedModel
+    });
+    
+    // You can add push notification logic here if needed
+    console.log('Notification created:', notification._id);
+    
+    return notification;
+  } catch (error) {
+    console.error('Error creating notification:', error);
+    // Don't throw error as notification failure shouldn't stop prize distribution
+  }
+};
+
