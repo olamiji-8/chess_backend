@@ -9,7 +9,7 @@ const fs = require('fs');
 const generatePKCE = require('../server/utils/pkce');
 const { verifyUserPin } = require('../utils/pinVerification');
 const jwt = require('jsonwebtoken');
-
+const { notifyUserWelcome } = require('../controllers/notificationController');
 
 const CLIENT_ID = process.env.LICHESS_CLIENT_ID;
 const REDIRECT_URI = process.env.LICHESS_REDIRECT_URI || 'http://localhost:5000/api/users/callback';
@@ -256,6 +256,28 @@ exports.handleCallback = async (req, res) => {
       { upsert: true, new: true }
     );
 
+    // 🎉 Send INSTANT welcome notification for ALL new users or first-time logins
+    if (isNewUser || user.isFirstLogin) {
+      try {
+        console.log(`🚀 Triggering INSTANT welcome notification for user: ${user._id}`);
+        
+        // Use notifyUserWelcome instead of the manual notification creation
+        const welcomeResult = await notifyUserWelcome(user._id);
+        console.log(`📨 Instant welcome notification result:`, welcomeResult);
+        
+        // Update the flag to prevent future welcome notifications
+        if (user.isFirstLogin) {
+          await User.findByIdAndUpdate(user._id, { isFirstLogin: false });
+          console.log(`✅ Updated isFirstLogin flag for user: ${user._id}`);
+        }
+      } catch (error) {
+        console.error('❌ Failed to send instant welcome notification:', error);
+        // Don't block the login process, just log the error
+      }
+    } else {
+      console.log(`ℹ️ Skipping welcome notification - returning user: ${username}`);
+    }
+    
     // Clear the code verifier cookie
     res.clearCookie('codeVerifier');
 
