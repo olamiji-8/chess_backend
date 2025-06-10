@@ -9,7 +9,7 @@ const fs = require('fs');
 const generatePKCE = require('../server/utils/pkce');
 const { verifyUserPin } = require('../utils/pinVerification');
 const jwt = require('jsonwebtoken');
-const { notifyUserWelcome } = require('../controllers/notificationController');
+
 
 const CLIENT_ID = process.env.LICHESS_CLIENT_ID;
 const REDIRECT_URI = process.env.LICHESS_REDIRECT_URI || 'http://localhost:5000/api/users/callback';
@@ -196,7 +196,6 @@ exports.loginWithLichess = (req, res) => {
 };
 
 // Handle callback from Lichess
-// Enhanced Lichess callback with instant welcome notification
 exports.handleCallback = async (req, res) => {
   try {
     const { code } = req.query;
@@ -207,7 +206,7 @@ exports.handleCallback = async (req, res) => {
       return res.redirect(`${FRONTEND_URL}/onboarding?error=missing_code_verifier`);
     }
 
-    // Exchange the code for an access token
+    // Exchange the code for an access token - this is likely slow
     const params = new URLSearchParams();
     params.append("grant_type", "authorization_code");
     params.append("code", code);
@@ -215,9 +214,10 @@ exports.handleCallback = async (req, res) => {
     params.append("redirect_uri", REDIRECT_URI);
     params.append("code_verifier", codeVerifier);
 
+    // Set a timeout for the token request
     const tokenResponse = await axios.post("https://lichess.org/api/token", params, {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      timeout: 5000
+      timeout: 5000 // Add a 5 second timeout
     });
 
     const accessToken = tokenResponse.data.access_token;
@@ -225,93 +225,36 @@ exports.handleCallback = async (req, res) => {
       throw new Error("Lichess authentication failed: No access token received.");
     }
 
-    // Fetch user details from Lichess
+    // Fetch user details - another potential slowdown
     const userRes = await axios.get("https://lichess.org/api/account", {
       headers: { Authorization: `Bearer ${accessToken}` },
-      timeout: 5000
+      timeout: 5000 // Add a 5 second timeout
     });
 
-    const lichessUserData = userRes.data;
-    console.log(`📊 Lichess user data received:`, {
-      username: lichessUserData.username,
-      email: lichessUserData.email || 'NOT PROVIDED',
-      profile: lichessUserData.profile || 'NO PROFILE'
-    });
+    const { username, email: lichessEmail } = userRes.data;
 
-    const { username, email: lichessEmail } = lichessUserData;
-
-    // Handle missing email from Lichess
-    const userEmail = lichessEmail || `${username}@lichess.temp`;
-    console.log(`📧 Using email: ${userEmail} (Original: ${lichessEmail || 'none'})`);
-
-    // Check if this is a new user
-    const existingUser = await User.findOne({
-      $or: [
-        { lichessUsername: username },
-        { email: userEmail },
-      ],
-    });
-
-    const isNewUser = !existingUser;
-    console.log(`👤 User status: ${isNewUser ? 'NEW USER' : 'EXISTING USER'}`);
-
-    // Create/update user with better email handling
+    // Use findOneAndUpdate instead of find + save to reduce DB operations
     const user = await User.findOneAndUpdate(
       {
         $or: [
           { lichessUsername: username },
-          { email: userEmail },
+          { email: lichessEmail || `${username}@lichess.org` },
         ],
       },
       {
         $setOnInsert: {
           fullName: username,
-          email: userEmail,
+          email: lichessEmail || `${username}@lichess.org`,
           password: await bcrypt.hash(crypto.randomBytes(20).toString("hex"), 10),
-          isVerified: lichessEmail ? true : false, // Only verify if real email provided
-          isFirstLogin: true,
-          lichessHasEmail: !!lichessEmail // Track if Lichess provided email
+          isVerified: false
         },
         $set: {
           lichessUsername: username,
-          lichessAccessToken: accessToken,
-          // Update email only if Lichess provides a real one
-          ...(lichessEmail && { email: lichessEmail, isVerified: true })
+          lichessAccessToken: accessToken
         }
       },
       { upsert: true, new: true }
     );
-
-    console.log(`💾 User saved:`, {
-      id: user._id,
-      email: user.email,
-      lichessUsername: user.lichessUsername,
-      isVerified: user.isVerified,
-      isFirstLogin: user.isFirstLogin,
-      lichessHasEmail: user.lichessHasEmail
-    });
-
-    // 🎉 Send INSTANT welcome notification for ALL new users or first-time logins
-    if (isNewUser || user.isFirstLogin) {
-      try {
-        console.log(`🚀 Triggering INSTANT welcome notification for user: ${user._id}`);
-        
-        // Use notifyUserWelcome instead of the manual notification creation
-        const welcomeResult = await notifyUserWelcome(user._id);
-        console.log(`📨 Instant welcome notification result:`, welcomeResult);
-        
-        // Update the flag to prevent future welcome notifications
-        if (user.isFirstLogin) {
-          await User.findByIdAndUpdate(user._id, { isFirstLogin: false });
-          console.log(`✅ Updated isFirstLogin flag for user: ${user._id}`);
-        }
-      } catch (error) {
-        console.error('❌ Failed to send instant welcome notification:', error);
-        // Don't block the login process, just log the error
-      }
-    } else {
-      console.log(`ℹ️ Skipping welcome notification - returning user: ${username}`);
-    }
 
     // Clear the code verifier cookie
     res.clearCookie('codeVerifier');
@@ -321,7 +264,6 @@ exports.handleCallback = async (req, res) => {
 
     // Redirect to frontend with JWT token
     return res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}`);
-    
   } catch (error) {
     console.error("❌ Lichess Authentication Error:", {
       message: error.message,
@@ -332,6 +274,7 @@ exports.handleCallback = async (req, res) => {
     return res.redirect(`${FRONTEND_URL}/login?error=auth_failed&message=${encodeURIComponent(error.message)}`);
   }
 };
+
 
 exports.getUserProfile = asyncHandler(async (req, res) => {
   // Use req.user which is set by the JWT authentication middleware
