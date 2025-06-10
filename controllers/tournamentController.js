@@ -1144,6 +1144,7 @@ exports.distributeTournamentPrizes = asyncHandler(async (req, res) => {
 exports.getTournamentParticipants = asyncHandler(async (req, res) => {
   try {
     const { tournamentId } = req.params;
+    const { status } = req.query; // Get status filter from query params
     
     const tournament = await Tournament.findById(tournamentId)
       .populate('participants', 'fullName email profilePic lichessUsername')
@@ -1156,6 +1157,24 @@ exports.getTournamentParticipants = asyncHandler(async (req, res) => {
     // Check if user is the organizer
     if (tournament.organizer._id.toString() !== req.user.id) {
       return res.status(403).json({ message: 'Only tournament organizer can view participants' });
+    }
+    
+    // Filter by status if provided
+    if (status && tournament.status !== status) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          tournament: {
+            id: tournament._id,
+            title: tournament.title,
+            status: tournament.status,
+            prizeType: tournament.prizeType,
+            prizeStructure: {}
+          },
+          participants: [],
+          totalParticipants: 0
+        }
+      });
     }
     
     // Get prize structure for reference
@@ -1191,5 +1210,6 @@ exports.getTournamentParticipants = asyncHandler(async (req, res) => {
     });
   }
 });
+
 
 
