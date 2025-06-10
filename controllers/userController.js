@@ -282,10 +282,10 @@ exports.getUserProfile = asyncHandler(async (req, res) => {
     .populate('registeredTournaments', 'title startDate status')
     .populate({
       path: 'createdTournaments',
-      select: 'title startDate status organizer category banner rules startTime duration prizeType prizes entryFee fundingMethod participants tournamentLink',
+      select: 'title startDate status category banner rules startTime duration prizeType prizes entryFee fundingMethod participants tournamentLink',
       populate: {
-        path: 'organizer',
-        select: 'fullName email profilePic phoneNumber lichessUsername isVerified walletBalance hasPin'
+        path: 'participants',
+        select: '_id'
       }
     });
   
@@ -300,6 +300,7 @@ exports.getUserProfile = asyncHandler(async (req, res) => {
     success: true,
     data: {
       id: user._id,
+      organizer: user._id, // Added organizer ID at the top level
       fullName: user.fullName,
       email: user.email,
       profilePic: user.profilePic,
@@ -310,7 +311,7 @@ exports.getUserProfile = asyncHandler(async (req, res) => {
       bankDetails: user.bankDetails,
       bankCode: bankCode, // Added bankCode explicitly
       registeredTournaments: user.registeredTournaments,
-      createdTournaments: user.createdTournaments, // Now includes full tournament details with organizer info
+      createdTournaments: user.createdTournaments, // Tournament details without nested organizer info
       hasPin: user.hasPin,
     }
   });
