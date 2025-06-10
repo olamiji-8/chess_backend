@@ -196,7 +196,7 @@ exports.loginWithLichess = (req, res) => {
 };
 
 // Handle callback from Lichess
-// Enhanced Lichess callback with better email handling
+// Enhanced Lichess callback with instant welcome notification
 exports.handleCallback = async (req, res) => {
   try {
     const { code } = req.query;
@@ -291,13 +291,14 @@ exports.handleCallback = async (req, res) => {
       lichessHasEmail: user.lichessHasEmail
     });
 
-    // 🎉 Send welcome notification (only if we have a real email)
-    if ((isNewUser || user.isFirstLogin) && user.lichessHasEmail) {
+    // 🎉 Send INSTANT welcome notification for ALL new users or first-time logins
+    if (isNewUser || user.isFirstLogin) {
       try {
-        console.log(`🎉 Triggering welcome notification for user: ${user._id}`);
+        console.log(`🚀 Triggering INSTANT welcome notification for user: ${user._id}`);
         
+        // Use notifyUserWelcome instead of the manual notification creation
         const welcomeResult = await notifyUserWelcome(user._id);
-        console.log(`📨 Welcome notification result:`, welcomeResult);
+        console.log(`📨 Instant welcome notification result:`, welcomeResult);
         
         // Update the flag to prevent future welcome notifications
         if (user.isFirstLogin) {
@@ -305,10 +306,11 @@ exports.handleCallback = async (req, res) => {
           console.log(`✅ Updated isFirstLogin flag for user: ${user._id}`);
         }
       } catch (error) {
-        console.error('❌ Failed to send welcome notification:', error);
+        console.error('❌ Failed to send instant welcome notification:', error);
+        // Don't block the login process, just log the error
       }
-    } else if (!user.lichessHasEmail) {
-      console.log(`⚠️ Skipping welcome email - no real email from Lichess for user: ${username}`);
+    } else {
+      console.log(`ℹ️ Skipping welcome notification - returning user: ${username}`);
     }
 
     // Clear the code verifier cookie
@@ -330,7 +332,6 @@ exports.handleCallback = async (req, res) => {
     return res.redirect(`${FRONTEND_URL}/login?error=auth_failed&message=${encodeURIComponent(error.message)}`);
   }
 };
-
 
 exports.getUserProfile = asyncHandler(async (req, res) => {
   // Use req.user which is set by the JWT authentication middleware
