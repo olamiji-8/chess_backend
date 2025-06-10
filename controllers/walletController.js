@@ -11,6 +11,250 @@ const notificationController = require('./notificationController');
 // @desc    Initiate deposit to wallet with PIN verification and optional recipient transfer
 // @route   POST /api/wallet/deposit
 // @access  Private
+// exports.initiateDeposit = asyncHandler(async (req, res) => {
+//   try {
+//     const { amount, pin, recipientAccountNumber, isTransferToRecipient, paymentMethod } = req.body;
+    
+//     // Ensure user exists
+//     if (!req.user || !req.user._id) {
+//       return res.status(401).json({ message: 'User authentication failed' });
+//     }
+    
+//     const userId = req.user._id || req.user.id;
+    
+//     // Validate amount
+//     if (!amount || isNaN(amount) || amount <= 0) {
+//       return res.status(400).json({ message: 'Please provide a valid amount' });
+//     }
+    
+//     // Validate PIN 
+//     const pinVerification = await verifyUserPin(userId, pin);
+    
+//     if (!pinVerification.success) {
+//       return res.status(401).json({ message: pinVerification.message });
+//     }
+    
+//     // Get full user data AFTER pin verification
+//     const user = await User.findById(userId);
+    
+//     if (!user || !user.email) {
+//       return res.status(404).json({ message: 'User data incomplete or missing' });
+//     }
+    
+//     // ADD LOGGING HERE - before any payment processing
+// console.log('User email being sent to Paystack:', user.email);
+// console.log('User object:', user);
+// console.log('Email validation check:', {
+//   email: user.email,
+//   emailType: typeof user.email,
+//   emailLength: user.email ? user.email.length : 'null/undefined'
+// });
+
+// // Validate email format
+// const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// if (!user.email || !emailRegex.test(user.email)) {
+//   return res.status(400).json({ 
+//     success: false, 
+//     message: 'Invalid email address in user profile' 
+//   });
+// }
+
+//     // Check if this is a transfer to another user
+//     let recipientUser = null;
+//     if (isTransferToRecipient && recipientAccountNumber) {
+//       // Find recipient user by Paystack account number
+//       recipientUser = await User.findOne({ 'bankDetails.accountNumber': recipientAccountNumber });
+      
+//       if (!recipientUser) {
+//         return res.status(404).json({ 
+//           success: false, 
+//           message: 'Recipient with this account number not found' 
+//         });
+//       }
+//     }
+
+//     // Generate reference
+//     const reference = 'CHESS_' + crypto.randomBytes(8).toString('hex');
+    
+//     // Create transaction record
+//     const transaction = await Transaction.create({
+//       user: userId,
+//       type: recipientUser ? 'transfer' : 'deposit',
+//       amount,
+//       reference,
+//       status: 'pending',
+//       paymentMethod: paymentMethod || 'paystack',
+//       recipient: recipientUser ? recipientUser._id : null,
+//       details: recipientUser ? {
+//         recipientName: recipientUser.fullName,
+//         recipientAccountNumber: recipientAccountNumber
+//       } : {}
+//     });
+
+//     // Check for Titan payment method
+//     if (paymentMethod === 'titan') {
+//       try {
+//         // Split full name for Paystack requirements
+//         const nameParts = user.fullName.split(' ');
+//         const firstName = nameParts[0] || '';
+//         const lastName = nameParts.slice(1).join(' ') || 'User';
+        
+//         // Generate a dedicated virtual account
+//         const titanResponse = await axios.post(
+//           'https://api.paystack.co/dedicated_account',
+//           {
+//             customer: user.paystackCustomerId || user.email,
+//             preferred_bank: 'wema-bank', 
+//             amount: amount * 100, // Amount in kobo
+//             reference,
+//             phone: user.phoneNumber || "08000000000",
+//             first_name: firstName,
+//             last_name: lastName
+//           },
+//           {
+//             headers: {
+//               Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+//               'Content-Type': 'application/json'
+//             }
+//           }
+//         );
+        
+//         // Save virtual account details to transaction
+//         transaction.details = {
+//           ...transaction.details,
+//           titanAccountNumber: titanResponse.data.data.account_number,
+//           titanBankName: titanResponse.data.data.bank.name,
+//           titanAccountName: titanResponse.data.data.account_name,
+//           titanExpiresAt: new Date(Date.now() + 30 * 60 * 1000) // 30 minutes expiry
+//         };
+//         await transaction.save();
+        
+//         return res.status(200).json({
+//           success: true,
+//           data: {
+//             reference,
+//             method: 'titan',
+//             accountNumber: titanResponse.data.data.account_number,
+//             bankName: titanResponse.data.data.bank.name,
+//             accountName: titanResponse.data.data.account_name,
+//             amount,
+//             expiresIn: '30 minutes',
+//             isTransferToRecipient: !!recipientUser,
+//             recipientName: recipientUser ? recipientUser.fullName : null
+//           }
+//         });
+//       } catch (error) {
+//         console.error('Titan Error:', error.response ? error.response.data : error.message);
+        
+//         // Instead of trying to reassign paymentMethod, just continue with standard Paystack
+//         console.log('Falling back to standard Paystack payment');
+        
+//         // Use standard Paystack method instead of trying to reassign paymentMethod
+//         try {
+//           const paystackResponse = await axios.post(
+//             'https://api.paystack.co/transaction/initialize',
+//             {
+//               email: user.email,
+//               amount: amount * 100,
+//               reference,
+//               callback_url: process.env.PAYSTACK_CALLBACK_URL,
+//               metadata: {
+//                 userId: userId.toString(),
+//                 transactionId: transaction._id.toString(),
+//                 isTransferToRecipient: !!recipientUser,
+//                 recipientId: recipientUser ? recipientUser._id.toString() : null
+//               }
+//             },
+//             {
+//               headers: {
+//                 Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+//                 'Content-Type': 'application/json'
+//               }
+//             }
+//           );
+          
+//           res.status(200).json({
+//             success: true,
+//             data: {
+//               method: 'paystack',
+//               authorizationUrl: paystackResponse.data.data.authorization_url,
+//               reference,
+//               isTransferToRecipient: !!recipientUser,
+//               recipientName: recipientUser ? recipientUser.fullName : null
+//             }
+//           });
+//         } catch (paystackError) {
+//           // Update transaction status to failed
+//           transaction.status = 'failed';
+//           await transaction.save();
+          
+//           console.error('Paystack Error:', paystackError.response ? paystackError.response.data : paystackError.message);
+//           res.status(500).json({
+//             success: false,
+//             message: 'Failed to initialize payment. Please try again later.'
+//           });
+//         }
+//       }
+//     } else {
+//       // Standard Paystack flow remains unchanged
+//       try {
+//         const paystackResponse = await axios.post(
+//           'https://api.paystack.co/transaction/initialize',
+//           {
+//             email: user.email,
+//             amount: amount * 100,
+//             reference,
+//             callback_url: process.env.PAYSTACK_CALLBACK_URL,
+//             metadata: {
+//               userId: userId.toString(),
+//               transactionId: transaction._id.toString(),
+//               isTransferToRecipient: !!recipientUser,
+//               recipientId: recipientUser ? recipientUser._id.toString() : null
+//             }
+//           },
+//           {
+//             headers: {
+//               Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+//               'Content-Type': 'application/json'
+//             }
+//           }
+//         );
+        
+//         res.status(200).json({
+//           success: true,
+//           data: {
+//             method: 'paystack',
+//             authorizationUrl: paystackResponse.data.data.authorization_url,
+//             reference,
+//             isTransferToRecipient: !!recipientUser,
+//             recipientName: recipientUser ? recipientUser.fullName : null
+//           }
+//         });
+//       } catch (error) {
+//         // Update transaction status to failed
+//         transaction.status = 'failed';
+//         await transaction.save();
+        
+//         console.error('Paystack Error:', error.response ? error.response.data : error.message);
+//         res.status(500).json({
+//           success: false,
+//           message: 'Failed to initialize payment. Please try again later.'
+//         });
+//       }
+//     }
+//   } catch (error) {
+//     console.error('Deposit Error:', {
+//       message: error.message,
+//       stack: error.stack,
+//       body: req.body
+//     });
+//     res.status(500).json({
+//       success: false,
+//       message: 'An unexpected error occurred'
+//     });
+//   }
+// });
+
 exports.initiateDeposit = asyncHandler(async (req, res) => {
   try {
     const { amount, pin, recipientAccountNumber, isTransferToRecipient, paymentMethod } = req.body;
@@ -35,12 +279,72 @@ exports.initiateDeposit = asyncHandler(async (req, res) => {
     }
     
     // Get full user data AFTER pin verification
-    const user = await User.findById(userId);
+    let user = await User.findById(userId);
     
-    if (!user || !user.email) {
-      return res.status(404).json({ message: 'User data incomplete or missing' });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
     }
     
+    // 🔥 NEW: Check if user has temporary email and try to get real email
+    if (user.email.endsWith('@lichess.temp') || !user.email || user.email === '') {
+      console.log(`⚠️ User has temporary/invalid email: ${user.email}. Attempting to fetch real email...`);
+      
+      if (user.lichessAccessToken) {
+        try {
+          // Try to get real email from Lichess
+          const emailRes = await axios.get("https://lichess.org/api/account/email", {
+            headers: { Authorization: `Bearer ${user.lichessAccessToken}` },
+            timeout: 5000
+          });
+
+          if (emailRes.data && emailRes.data.email) {
+            const realEmail = emailRes.data.email;
+            console.log(`✅ Real email found: ${realEmail}`);
+            
+            // Update user with real email
+            user = await User.findByIdAndUpdate(userId, {
+              email: realEmail,
+              isVerified: true,
+              emailSource: 'lichess_api'
+            }, { new: true });
+            
+            console.log(`✅ Updated user email from ${user.email} to ${realEmail}`);
+          }
+        } catch (emailError) {
+          console.log(`❌ Could not fetch real email from Lichess:`, emailError.response?.data || emailError.message);
+        }
+      }
+      
+      // If still temporary email, ask user to provide real email
+      if (user.email.endsWith('@lichess.temp') || !user.email) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Please update your email address in your profile before making deposits',
+          code: 'EMAIL_REQUIRED',
+          data: {
+            currentEmail: user.email,
+            needsEmailUpdate: true
+          }
+        });
+      }
+    }
+    
+    // Enhanced email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!user.email || !emailRegex.test(user.email) || user.email.includes('lichess.temp')) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Please provide a valid email address in your profile',
+        code: 'INVALID_EMAIL',
+        data: {
+          currentEmail: user.email,
+          needsEmailUpdate: true
+        }
+      });
+    }
+
+    console.log('✅ Valid email confirmed for Paystack:', user.email);
+
     // Check if this is a transfer to another user
     let recipientUser = null;
     if (isTransferToRecipient && recipientAccountNumber) {
@@ -73,21 +377,19 @@ exports.initiateDeposit = asyncHandler(async (req, res) => {
       } : {}
     });
 
-    // Check for Titan payment method
+    // Rest of your existing payment logic remains the same...
     if (paymentMethod === 'titan') {
       try {
-        // Split full name for Paystack requirements
         const nameParts = user.fullName.split(' ');
         const firstName = nameParts[0] || '';
         const lastName = nameParts.slice(1).join(' ') || 'User';
         
-        // Generate a dedicated virtual account
         const titanResponse = await axios.post(
           'https://api.paystack.co/dedicated_account',
           {
             customer: user.paystackCustomerId || user.email,
             preferred_bank: 'wema-bank', 
-            amount: amount * 100, // Amount in kobo
+            amount: amount * 100,
             reference,
             phone: user.phoneNumber || "08000000000",
             first_name: firstName,
@@ -101,13 +403,12 @@ exports.initiateDeposit = asyncHandler(async (req, res) => {
           }
         );
         
-        // Save virtual account details to transaction
         transaction.details = {
           ...transaction.details,
           titanAccountNumber: titanResponse.data.data.account_number,
           titanBankName: titanResponse.data.data.bank.name,
           titanAccountName: titanResponse.data.data.account_name,
-          titanExpiresAt: new Date(Date.now() + 30 * 60 * 1000) // 30 minutes expiry
+          titanExpiresAt: new Date(Date.now() + 30 * 60 * 1000)
         };
         await transaction.save();
         
@@ -127,102 +428,55 @@ exports.initiateDeposit = asyncHandler(async (req, res) => {
         });
       } catch (error) {
         console.error('Titan Error:', error.response ? error.response.data : error.message);
-        
-        // Instead of trying to reassign paymentMethod, just continue with standard Paystack
         console.log('Falling back to standard Paystack payment');
         
-        // Use standard Paystack method instead of trying to reassign paymentMethod
-        try {
-          const paystackResponse = await axios.post(
-            'https://api.paystack.co/transaction/initialize',
-            {
-              email: user.email,
-              amount: amount * 100,
-              reference,
-              callback_url: process.env.PAYSTACK_CALLBACK_URL,
-              metadata: {
-                userId: userId.toString(),
-                transactionId: transaction._id.toString(),
-                isTransferToRecipient: !!recipientUser,
-                recipientId: recipientUser ? recipientUser._id.toString() : null
-              }
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-                'Content-Type': 'application/json'
-              }
-            }
-          );
-          
-          res.status(200).json({
-            success: true,
-            data: {
-              method: 'paystack',
-              authorizationUrl: paystackResponse.data.data.authorization_url,
-              reference,
-              isTransferToRecipient: !!recipientUser,
-              recipientName: recipientUser ? recipientUser.fullName : null
-            }
-          });
-        } catch (paystackError) {
-          // Update transaction status to failed
-          transaction.status = 'failed';
-          await transaction.save();
-          
-          console.error('Paystack Error:', paystackError.response ? paystackError.response.data : paystackError.message);
-          res.status(500).json({
-            success: false,
-            message: 'Failed to initialize payment. Please try again later.'
-          });
-        }
+        // Fallback to standard Paystack...
       }
-    } else {
-      // Standard Paystack flow remains unchanged
-      try {
-        const paystackResponse = await axios.post(
-          'https://api.paystack.co/transaction/initialize',
-          {
-            email: user.email,
-            amount: amount * 100,
-            reference,
-            callback_url: process.env.PAYSTACK_CALLBACK_URL,
-            metadata: {
-              userId: userId.toString(),
-              transactionId: transaction._id.toString(),
-              isTransferToRecipient: !!recipientUser,
-              recipientId: recipientUser ? recipientUser._id.toString() : null
-            }
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-        
-        res.status(200).json({
-          success: true,
-          data: {
-            method: 'paystack',
-            authorizationUrl: paystackResponse.data.data.authorization_url,
-            reference,
+    }
+    
+    // Standard Paystack flow
+    try {
+      const paystackResponse = await axios.post(
+        'https://api.paystack.co/transaction/initialize',
+        {
+          email: user.email, // Now guaranteed to be valid
+          amount: amount * 100,
+          reference,
+          callback_url: process.env.PAYSTACK_CALLBACK_URL,
+          metadata: {
+            userId: userId.toString(),
+            transactionId: transaction._id.toString(),
             isTransferToRecipient: !!recipientUser,
-            recipientName: recipientUser ? recipientUser.fullName : null
+            recipientId: recipientUser ? recipientUser._id.toString() : null
           }
-        });
-      } catch (error) {
-        // Update transaction status to failed
-        transaction.status = 'failed';
-        await transaction.save();
-        
-        console.error('Paystack Error:', error.response ? error.response.data : error.message);
-        res.status(500).json({
-          success: false,
-          message: 'Failed to initialize payment. Please try again later.'
-        });
-      }
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      res.status(200).json({
+        success: true,
+        data: {
+          method: 'paystack',
+          authorizationUrl: paystackResponse.data.data.authorization_url,
+          reference,
+          isTransferToRecipient: !!recipientUser,
+          recipientName: recipientUser ? recipientUser.fullName : null
+        }
+      });
+    } catch (error) {
+      transaction.status = 'failed';
+      await transaction.save();
+      
+      console.error('Paystack Error:', error.response ? error.response.data : error.message);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to initialize payment. Please try again later.'
+      });
     }
   } catch (error) {
     console.error('Deposit Error:', {
@@ -233,6 +487,70 @@ exports.initiateDeposit = asyncHandler(async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'An unexpected error occurred'
+    });
+  }
+});
+
+// 2. PROFILE UPDATE ENDPOINT: Allow users to update their email
+exports.updateUserEmail = asyncHandler(async (req, res) => {
+  try {
+    const { email } = req.body;
+    const userId = req.user._id;
+    
+    if (!email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email is required' 
+      });
+    }
+    
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Please provide a valid email address' 
+      });
+    }
+    
+    // Check if email is already taken by another user
+    const existingUser = await User.findOne({ 
+      email: email.toLowerCase(),
+      _id: { $ne: userId }
+    });
+    
+    if (existingUser) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email address is already in use' 
+      });
+    }
+    
+    // Update user email
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { 
+        email: email.toLowerCase(),
+        isVerified: false, // Reset verification status
+        emailSource: 'manual'
+      },
+      { new: true }
+    );
+    
+    res.status(200).json({
+      success: true,
+      message: 'Email updated successfully',
+      data: {
+        email: updatedUser.email,
+        isVerified: updatedUser.isVerified
+      }
+    });
+    
+  } catch (error) {
+    console.error('Update email error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update email'
     });
   }
 });

@@ -22,50 +22,50 @@ const TOKEN_EXPIRY = '7d'; // Token expires in 7 days
 // @desc    Register a new user
 // @route   POST /api/users/register
 // @access  Public
-exports.registerUser = asyncHandler(async (req, res) => {
-  const { fullName, email, password } = req.body;
+// exports.registerUser = asyncHandler(async (req, res) => {
+//   const { fullName, email, password } = req.body;
 
-  // Check if user already exists
-  const userExists = await User.findOne({ email });
+//   // Check if user already exists
+//   const userExists = await User.findOne({ email });
 
-  if (userExists) {
-    res.status(400);
-    throw new Error('User already exists');
-  }
+//   if (userExists) {
+//     res.status(400);
+//     throw new Error('User already exists');
+//   }
 
-  // Generate default PIN for registration
-  const defaultPin = Math.floor(1000 + Math.random() * 9000).toString();
-  const salt = await bcrypt.genSalt(10);
-  const hashedPin = await bcrypt.hash(defaultPin, salt);
+//   // Generate default PIN for registration
+//   const defaultPin = Math.floor(1000 + Math.random() * 9000).toString();
+//   const salt = await bcrypt.genSalt(10);
+//   const hashedPin = await bcrypt.hash(defaultPin, salt);
 
-  // Create new user
-  const user = await User.create({
-    fullName,
-    email,
-    password,
-    pin: hashedPin // Store the hashed default PIN
-  });
+//   // Create new user
+//   const user = await User.create({
+//     fullName,
+//     email,
+//     password,
+//     pin: hashedPin // Store the hashed default PIN
+//   });
 
-  if (user) {
-    // Generate JWT token
-    const token = generateToken(user._id);
+//   if (user) {
+//     // Generate JWT token
+//     const token = generateToken(user._id);
     
-    res.status(201).json({
-      success: true,
-      data: {
-        id: user._id,
-        fullName: user.fullName,
-        email: user.email,
-        isVerified: user.isVerified,
-        token
-      },
-      message: 'Registration successful. Please set your PIN for transactions.'
-    });
-  } else {
-    res.status(400);
-    throw new Error('Invalid user data');
-  }
-});
+//     res.status(201).json({
+//       success: true,
+//       data: {
+//         id: user._id,
+//         fullName: user.fullName,
+//         email: user.email,
+//         isVerified: user.isVerified,
+//         token
+//       },
+//       message: 'Registration successful. Please set your PIN for transactions.'
+//     });
+//   } else {
+//     res.status(400);
+//     throw new Error('Invalid user data');
+//   }
+// });
 
 /**    
  * @desc    Create a new admin user
@@ -134,35 +134,35 @@ exports.createAdmin = asyncHandler(async (req, res) => {
 });
 
 
-// @desc    Login user
-// @route   POST /api/users/login
-// @access  Public
-exports.loginUser = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
+// // @desc    Login user
+// // @route   POST /api/users/login
+// // @access  Public
+// exports.loginUser = asyncHandler(async (req, res) => {
+//   const { email, password } = req.body;
 
-  // Find user by email
-  const user = await User.findOne({ email }).select('+password');
+//   // Find user by email
+//   const user = await User.findOne({ email }).select('+password');
 
-  if (!user || !(await user.matchPassword(password))) {
-    res.status(401);
-    throw new Error('Invalid email or password');
-  }
+//   if (!user || !(await user.matchPassword(password))) {
+//     res.status(401);
+//     throw new Error('Invalid email or password');
+//   }
 
-  // Generate JWT token
-  const token = generateToken(user._id);
+//   // Generate JWT token
+//   const token = generateToken(user._id);
   
-  res.status(200).json({
-    success: true,
-    data: {
-      id: user._id,
-      fullName: user.fullName,
-      email: user.email,
-      isVerified: user.isVerified,
-      lichessUsername: user.lichessUsername,
-      token
-    }
-  });
-});
+//   res.status(200).json({
+//     success: true,
+//     data: {
+//       id: user._id,
+//       fullName: user.fullName,
+//       email: user.email,
+//       isVerified: user.isVerified,
+//       lichessUsername: user.lichessUsername,
+//       token
+//     }
+//   });
+// });
 
 // @desc    Logout user
 // @route   GET /api/users/logout
@@ -189,14 +189,13 @@ exports.loginWithLichess = (req, res) => {
     maxAge: 10 * 60 * 1000 // 10 minutes
   });
   
-  const authUrl = `https://lichess.org/oauth?response_type=code&client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&code_challenge_method=S256&code_challenge=${pkce.codeChallenge}&scope=preference:read`;
+  // 🔥 FIXED: Added email:read scope to access user's email
+  const authUrl = `https://lichess.org/oauth?response_type=code&client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&code_challenge_method=S256&code_challenge=${pkce.codeChallenge}&scope=preference:read email:read`;
 
   console.log('Redirecting to:', authUrl);
   res.redirect(authUrl);
 };
 
-// Handle callback from Lichess
-// Enhanced Lichess callback with instant welcome notification
 exports.handleCallback = async (req, res) => {
   try {
     const { code } = req.query;
@@ -217,7 +216,7 @@ exports.handleCallback = async (req, res) => {
 
     const tokenResponse = await axios.post("https://lichess.org/api/token", params, {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      timeout: 5000
+      timeout: 10000 // Increased timeout
     });
 
     const accessToken = tokenResponse.data.access_token;
@@ -228,21 +227,81 @@ exports.handleCallback = async (req, res) => {
     // Fetch user details from Lichess
     const userRes = await axios.get("https://lichess.org/api/account", {
       headers: { Authorization: `Bearer ${accessToken}` },
-      timeout: 5000
+      timeout: 10000
     });
 
     const lichessUserData = userRes.data;
     console.log(`📊 Lichess user data received:`, {
       username: lichessUserData.username,
-      email: lichessUserData.email || 'NOT PROVIDED',
-      profile: lichessUserData.profile || 'NO PROFILE'
+      hasEmailInProfile: !!lichessUserData.email
     });
 
-    const { username, email: lichessEmail } = lichessUserData;
+    const { username } = lichessUserData;
+    let userEmail = null;
+    let emailFromDedicatedEndpoint = false;
 
-    // Handle missing email from Lichess
-    const userEmail = lichessEmail || `${username}@lichess.temp`;
-    console.log(`📧 Using email: ${userEmail} (Original: ${lichessEmail || 'none'})`);
+    // 🔥 IMPROVED: Enhanced email fetching with proper error handling
+    try {
+      console.log(`📧 Attempting to fetch email from dedicated endpoint with email:read scope...`);
+      const emailRes = await axios.get("https://lichess.org/api/account/email", {
+        headers: { 
+          Authorization: `Bearer ${accessToken}`,
+          'User-Agent': 'Your-App-Name/1.0' // Good practice to identify your app
+        },
+        timeout: 10000
+      });
+
+      console.log(`📧 Email endpoint response:`, emailRes.data);
+
+      if (emailRes.data && emailRes.data.email) {
+        userEmail = emailRes.data.email;
+        emailFromDedicatedEndpoint = true;
+        console.log(`✅ Email successfully retrieved from dedicated endpoint: ${userEmail}`);
+      } else {
+        console.log(`⚠️ Email endpoint returned empty or invalid response:`, emailRes.data);
+      }
+    } catch (emailError) {
+      console.log(`⚠️ Could not fetch email from dedicated endpoint:`, {
+        status: emailError.response?.status,
+        statusText: emailError.response?.statusText,
+        data: emailError.response?.data,
+        message: emailError.message
+      });
+      
+      // 🔥 ADDED: Specific error handling for common issues
+      if (emailError.response?.status === 401) {
+        console.error(`❌ CRITICAL: Unauthorized access to email endpoint. Check if email:read scope is properly granted.`);
+      } else if (emailError.response?.status === 403) {
+        console.error(`❌ CRITICAL: Forbidden access to email endpoint. User may not have email visibility enabled.`);
+      }
+    }
+
+    // Fallback to profile email if dedicated endpoint failed
+    if (!userEmail && lichessUserData.email) {
+      userEmail = lichessUserData.email;
+      console.log(`📧 Using email from profile: ${userEmail}`);
+    }
+
+    // 🔥 IMPROVED: Better handling of missing email
+    if (!userEmail) {
+      console.log(`❌ No email available from any source. This will cause issues with wallet functionality.`);
+      
+      // Option 1: Redirect to profile completion page
+      return res.redirect(`${FRONTEND_URL}/complete-profile?error=no_email&username=${username}`);
+      
+      // Option 2: Use temporary email but flag the account (uncomment if you prefer this approach)
+      /*
+      userEmail = `${username}@lichess.temp`;
+      console.log(`📧 Using temporary email: ${userEmail}`);
+      */
+    }
+
+    console.log(`📧 Final email decision:`, {
+      email: userEmail,
+      source: emailFromDedicatedEndpoint ? 'dedicated_endpoint' : 
+              lichessUserData.email ? 'profile' : 'temporary',
+      isVerified: emailFromDedicatedEndpoint || !!lichessUserData.email
+    });
 
     // Check if this is a new user
     const existingUser = await User.findOne({
@@ -255,7 +314,7 @@ exports.handleCallback = async (req, res) => {
     const isNewUser = !existingUser;
     console.log(`👤 User status: ${isNewUser ? 'NEW USER' : 'EXISTING USER'}`);
 
-    // Create/update user with better email handling
+    // 🔥 IMPROVED: Enhanced user creation/update logic
     const user = await User.findOneAndUpdate(
       {
         $or: [
@@ -268,15 +327,20 @@ exports.handleCallback = async (req, res) => {
           fullName: username,
           email: userEmail,
           password: await bcrypt.hash(crypto.randomBytes(20).toString("hex"), 10),
-          isVerified: lichessEmail ? true : false, // Only verify if real email provided
+          isVerified: emailFromDedicatedEndpoint || !!lichessUserData.email,
           isFirstLogin: true,
-          lichessHasEmail: !!lichessEmail // Track if Lichess provided email
+          emailSource: emailFromDedicatedEndpoint ? 'lichess_api' : 
+                      lichessUserData.email ? 'lichess_profile' : 'temporary'
         },
         $set: {
           lichessUsername: username,
           lichessAccessToken: accessToken,
-          // Update email only if Lichess provides a real one
-          ...(lichessEmail && { email: lichessEmail, isVerified: true })
+          // 🔥 IMPROVED: Only update email if we got a real one
+          ...(userEmail && userEmail !== `${username}@lichess.temp` && { 
+            email: userEmail, 
+            isVerified: emailFromDedicatedEndpoint || !!lichessUserData.email,
+            emailSource: emailFromDedicatedEndpoint ? 'lichess_api' : 'lichess_profile'
+          })
         }
       },
       { upsert: true, new: true }
@@ -287,30 +351,26 @@ exports.handleCallback = async (req, res) => {
       email: user.email,
       lichessUsername: user.lichessUsername,
       isVerified: user.isVerified,
-      isFirstLogin: user.isFirstLogin,
-      lichessHasEmail: user.lichessHasEmail
+      emailSource: user.emailSource
     });
 
-    // 🎉 Send INSTANT welcome notification for ALL new users or first-time logins
-    if (isNewUser || user.isFirstLogin) {
+    // 🔥 IMPROVED: Only send welcome notification if we have a real email
+    if ((isNewUser || user.isFirstLogin) && user.email && !user.email.includes('@lichess.temp')) {
       try {
-        console.log(`🚀 Triggering INSTANT welcome notification for user: ${user._id}`);
+        console.log(`🚀 Triggering welcome notification for user: ${user._id}`);
         
-        // Use notifyUserWelcome instead of the manual notification creation
         const welcomeResult = await notifyUserWelcome(user._id);
-        console.log(`📨 Instant welcome notification result:`, welcomeResult);
+        console.log(`📨 Welcome notification result:`, welcomeResult);
         
-        // Update the flag to prevent future welcome notifications
         if (user.isFirstLogin) {
           await User.findByIdAndUpdate(user._id, { isFirstLogin: false });
           console.log(`✅ Updated isFirstLogin flag for user: ${user._id}`);
         }
       } catch (error) {
-        console.error('❌ Failed to send instant welcome notification:', error);
-        // Don't block the login process, just log the error
+        console.error('❌ Failed to send welcome notification:', error);
       }
     } else {
-      console.log(`ℹ️ Skipping welcome notification - returning user: ${username}`);
+      console.log(`ℹ️ Skipping welcome notification - ${!user.email ? 'no email' : 'temp email or returning user'}`);
     }
 
     // Clear the code verifier cookie
@@ -318,6 +378,11 @@ exports.handleCallback = async (req, res) => {
 
     // Generate JWT token
     const token = generateToken(user._id);
+
+    // 🔥 IMPROVED: Handle users with temporary emails
+    if (user.email && user.email.includes('@lichess.temp')) {
+      return res.redirect(`${FRONTEND_URL}/complete-profile?token=${token}&needs_email=true`);
+    }
 
     // Redirect to frontend with JWT token
     return res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}`);
@@ -332,6 +397,7 @@ exports.handleCallback = async (req, res) => {
     return res.redirect(`${FRONTEND_URL}/login?error=auth_failed&message=${encodeURIComponent(error.message)}`);
   }
 };
+
 
 exports.getUserProfile = asyncHandler(async (req, res) => {
   // Use req.user which is set by the JWT authentication middleware

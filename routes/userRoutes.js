@@ -23,9 +23,9 @@ const handleUploadError = (err, req, res, next) => {
 
 
 // Public routes
-router.post('/register', userController.registerUser);
+// router.post('/register', userController.registerUser);
 router.post('/create-admin', userController.createAdmin)
-router.post('/sigin', userController.loginUser);
+// router.post('/sigin', userController.loginUser);
 router.get('/logout', userController.logoutUser);
 router.get('/login', userController.loginWithLichess);
 router.get('/callback', userController.handleCallback);

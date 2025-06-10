@@ -20,6 +20,15 @@ const UserSchema = new mongoose.Schema({
     minlength: 6,
     select: false
   },
+    emailSource: {
+    type: String,
+    enum: ['lichess_api', 'lichess_profile', 'temporary', 'manual'],
+    default: 'manual'
+  },
+  isFirstLogin: {
+    type: Boolean,
+    default: true
+  },
   profilePic: {
     type: String,
     default: 'https://res.cloudinary.com/dxd1j0yzt/image/upload/v1743781047/IMG-20250404-WA0131_tvlbpz.jpg',
