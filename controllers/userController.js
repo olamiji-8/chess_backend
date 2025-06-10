@@ -195,7 +195,7 @@ exports.loginWithLichess = (req, res) => {
   res.redirect(authUrl);
 };
 
-// Handle callback from Lichess
+// Handle callback from Lichess with INSTANT WELCOME NOTIFICATION
 exports.handleCallback = async (req, res) => {
   try {
     const { code } = req.query;
@@ -233,6 +233,17 @@ exports.handleCallback = async (req, res) => {
 
     const { username, email: lichessEmail } = userRes.data;
 
+    // Check if user already exists to determine if they're new
+    const existingUser = await User.findOne({
+      $or: [
+        { lichessUsername: username },
+        { email: lichessEmail || `${username}@lichess.org` },
+      ],
+    });
+    
+    const isNewUser = !existingUser;
+    console.log(`👤 User status: ${isNewUser ? 'NEW USER' : 'EXISTING USER'} - ${username}`);
+
     // Use findOneAndUpdate instead of find + save to reduce DB operations
     const user = await User.findOneAndUpdate(
       {
@@ -256,14 +267,41 @@ exports.handleCallback = async (req, res) => {
       { upsert: true, new: true }
     );
 
+    // 🚀 TRIGGER INSTANT WELCOME NOTIFICATION FOR NEW USERS
+    if (isNewUser) {
+      console.log(`🎯 NEW USER DETECTED! Triggering instant welcome notification for: ${user._id}`);
+      
+      // Non-blocking approach - notification runs in background
+      // This ensures the user gets redirected immediately while notification processes
+      setImmediate(async () => {
+        try {
+          const notificationResult = await notifyUserWelcome(user._id);
+          console.log(`✅ Welcome notification completed for ${username}:`, {
+            pushSent: notificationResult.summary?.pushSent || false,
+            notificationCreated: notificationResult.summary?.notificationCreated || false,
+            emailSent: notificationResult.summary?.emailSent || false
+          });
+        } catch (notificationError) {
+          console.error(`❌ Welcome notification failed for ${username}:`, {
+            error: notificationError.message,
+            userId: user._id
+          });
+        }
+      });
+      
+      // Optional: Log the welcome trigger immediately
+      console.log(`📱 Welcome notification queued for ${username} (${user._id})`);
+    }
+
     // Clear the code verifier cookie
     res.clearCookie('codeVerifier');
 
     // Generate JWT token
     const token = generateToken(user._id);
 
-    // Redirect to frontend with JWT token
+    // Redirect to frontend with JWT token - INSTANT RESPONSE
     return res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}`);
+    
   } catch (error) {
     console.error("❌ Lichess Authentication Error:", {
       message: error.message,
