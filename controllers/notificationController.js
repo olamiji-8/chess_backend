@@ -314,6 +314,15 @@ exports.getUserNotifications = asyncHandler(async (req, res) => {
     order = 'desc' 
   } = req.query;
 
+  console.log(`🔍 Fetching notifications for user: ${req.user.id}`, {
+    page,
+    limit,
+    type,
+    read,
+    sortBy,
+    order
+  });
+
   // Build filter query
   const filterQuery = { user: req.user.id };
   
@@ -325,11 +334,17 @@ exports.getUserNotifications = asyncHandler(async (req, res) => {
     filterQuery.isRead = read === 'true';
   }
 
+  console.log(`🔍 Filter query:`, filterQuery);
+
   // Calculate pagination
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const sortOrder = order === 'asc' ? 1 : -1;
 
   try {
+    // 🔍 DEBUGGING: Check total notifications for this user first
+    const totalUserNotifications = await Notification.countDocuments({ user: req.user.id });
+    console.log(`📊 Total notifications for user ${req.user.id}: ${totalUserNotifications}`);
+
     // Get notifications with pagination
     const notifications = await Notification.find(filterQuery)
       .sort({ [sortBy]: sortOrder })
@@ -340,6 +355,8 @@ exports.getUserNotifications = asyncHandler(async (req, res) => {
         select: 'title name amount', // Adjust fields based on your related models
       });
 
+    console.log(`📱 Found ${notifications.length} notifications matching filter`);
+
     // Get total count for pagination
     const totalNotifications = await Notification.countDocuments(filterQuery);
     const totalPages = Math.ceil(totalNotifications / parseInt(limit));
@@ -348,6 +365,13 @@ exports.getUserNotifications = asyncHandler(async (req, res) => {
     const unreadCount = await Notification.countDocuments({
       user: req.user.id,
       isRead: false
+    });
+
+    console.log(`📊 Notification stats:`, {
+      totalNotifications,
+      totalPages,
+      unreadCount,
+      currentResults: notifications.length
     });
 
     res.status(200).json({
@@ -366,13 +390,20 @@ exports.getUserNotifications = asyncHandler(async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching notifications:', error);
+    console.error('❌ Error fetching notifications:', {
+      message: error.message,
+      stack: error.stack,
+      userId: req.user.id,
+      filterQuery
+    });
     res.status(500).json({
       success: false,
-      message: 'Error fetching notifications'
+      message: 'Error fetching notifications',
+      error: error.message
     });
   }
 });
+
 
 // @desc    Get notification statistics for user
 // @route   GET /api/notifications/stats
@@ -568,47 +599,107 @@ exports.markNotificationRead = asyncHandler(async (req, res) => {
 // Enhanced base utility function to create notifications with email and push
 exports.createNotification = async (userId, title, message, type, relatedId = null, relatedModel = null, options = {}) => {
   try {
+    console.log(`🔔 Creating notification for user ${userId}:`, {
+      title,
+      type,
+      relatedId,
+      relatedModel,
+      options
+    });
+
+    // 🔍 DEBUGGING: Validate inputs
+    if (!userId || !title || !message || !type) {
+      const error = `Missing required fields: userId=${userId}, title=${title}, message=${message}, type=${type}`;
+      console.error(`❌ ${error}`);
+      throw new Error(error);
+    }
+
     // Create database notification
-    const notification = await Notification.create({
+    const notificationData = {
       user: userId,
       title,
       message,
       type,
       relatedId,
-      relatedModel
+      relatedModel,
+      isRead: false,
+      emailSent: false,
+      pushSent: false
+    };
+
+    console.log(`📝 Creating notification with data:`, notificationData);
+    
+    const notification = await Notification.create(notificationData);
+    
+    console.log(`✅ Notification created in database:`, {
+      id: notification._id,
+      user: notification.user,
+      title: notification.title,
+      type: notification.type
     });
     
     // Get user details for email and push notifications
     const user = await User.findById(userId);
     if (!user) {
-      console.error('User not found for notification:', userId);
-      return notification;
+      console.error('❌ User not found for notification:', userId);
+      return notification; // Still return the notification even if user not found for additional services
     }
 
+    console.log(`👤 User found for additional notifications:`, {
+      id: user._id,
+      email: user.email,
+      pushSubscriptions: user.pushSubscriptions?.length || 0
+    });
+
     // Send email notification (unless disabled in options)
-    if (options.sendEmail !== false) {
-      const emailResult = await sendEmailNotification(user, title, message, type);
-      notification.emailSent = emailResult.success;
-      notification.emailError = emailResult.success ? null : emailResult.error;
+    if (options.sendEmail !== false && user.email && user.email.includes('@')) {
+      try {
+        console.log(`📧 Sending email notification...`);
+        const emailResult = await sendEmailNotification(user, title, message, type);
+        notification.emailSent = emailResult.success;
+        notification.emailError = emailResult.success ? null : emailResult.error;
+        console.log(`📧 Email result:`, emailResult);
+      } catch (emailError) {
+        console.error(`❌ Email notification error:`, emailError);
+        notification.emailError = emailError.message;
+      }
     }
 
     // Send push notification (unless disabled in options)
-    if (options.sendPush !== false) {
-      const pushResult = await sendPushNotification(user, title, message, type, relatedId);
-      notification.pushSent = pushResult.success;
-      notification.pushError = pushResult.success ? null : pushResult.error;
+    if (options.sendPush !== false && user.pushSubscriptions?.length > 0) {
+      try {
+        console.log(`📱 Sending push notification...`);
+        const pushResult = await sendPushNotification(user, title, message, type, relatedId);
+        notification.pushSent = pushResult.success;
+        notification.pushError = pushResult.success ? null : pushResult.error;
+        console.log(`📱 Push result:`, pushResult);
+      } catch (pushError) {
+        console.error(`❌ Push notification error:`, pushError);
+        notification.pushError = pushError.message;
+      }
     }
 
     // Save notification with delivery status
     await notification.save();
     
-    return notification;
+    console.log(`💾 Notification saved with final status:`, {
+      id: notification._id,
+      emailSent: notification.emailSent,
+      pushSent: notification.pushSent
+    });
+    
+    return notation;
   } catch (error) {
-    console.error('Error creating notification:', error);
-    return null;
+    console.error('❌ Error creating notification:', {
+      message: error.message,
+      stack: error.stack,
+      userId,
+      title,
+      type
+    });
+    throw error; // Re-throw to handle in calling function
   }
 };
-
 
 // ==================== USER PREFERENCE MANAGEMENT ====================
 
@@ -710,20 +801,12 @@ exports.notifyUserWelcome = async (userId) => {
     const title = "🎉 Welcome to 64SQURS!";
     const message = `Welcome ${user.lichessUsername || user.fullName}! You've successfully joined 64SQURS. Ready to dominate the chess world? 🏆`;
     
-    // STEP 2: Send IMMEDIATE push notification (highest priority)
-    console.log(`🚀 Sending immediate push notification...`);
-    const pushResult = await sendImmediatePushNotification(userId, title, message, {
-      priority: 'high',
-      requireInteraction: true
-    });
-    
-    console.log(`📱 Immediate push result:`, pushResult);
-    
-    // STEP 3: Create in-app notification (secondary)
+    // STEP 2: Create in-app notification FIRST (most important for your issue)
     console.log(`📱 Creating in-app notification...`);
     let notificationResult;
     
     try {
+      // 🔥 CRITICAL FIX: Call createNotification with proper parameters
       notificationResult = await exports.createNotification(
         userId,
         title,
@@ -732,14 +815,36 @@ exports.notifyUserWelcome = async (userId) => {
         null,
         null,
         { 
-          sendEmail: false, // Skip email for immediate notification
-          sendPush: false,  // We already sent push above
+          sendEmail: true,  // Enable email
+          sendPush: true,   // Enable push
           priority: 'high',
           requireInteraction: true
         }
       );
       
       console.log(`📱 In-app notification result:`, notificationResult);
+      
+      // 🔍 DEBUGGING: Check if notification was actually created
+      if (notificationResult && notificationResult._id) {
+        console.log(`✅ Notification created successfully with ID: ${notificationResult._id}`);
+        
+        // Verify it exists in database
+        const verifyNotification = await Notification.findById(notificationResult._id);
+        if (verifyNotification) {
+          console.log(`✅ Notification verified in database:`, {
+            id: verifyNotification._id,
+            user: verifyNotification.user,
+            title: verifyNotification.title,
+            type: verifyNotification.type,
+            isRead: verifyNotification.isRead,
+            createdAt: verifyNotification.createdAt
+          });
+        } else {
+          console.error(`❌ Notification not found in database after creation!`);
+        }
+      } else {
+        console.error(`❌ createNotification returned null or invalid result`);
+      }
       
     } catch (notificationError) {
       console.error(`❌ In-app notification error:`, notificationError);
@@ -749,46 +854,26 @@ exports.notifyUserWelcome = async (userId) => {
       };
     }
     
-    // STEP 4: Send email notification (optional, can be delayed)
-    let emailResult = { success: true, skipped: true };
+    // STEP 3: Send IMMEDIATE push notification (secondary)
+    console.log(`🚀 Sending immediate push notification...`);
+    let pushResult = { success: true, skipped: true };
     
-    if (user.email && user.email.includes('@') && !user.email.includes('@lichess.temp')) {
-      console.log(`📧 Sending welcome email to: ${user.email}`);
-      
-      const emailMessage = `Welcome to 64SQURS! 🎉
-      
-You've successfully signed in using your Lichess ID. We're excited to have you join our growing community of chess enthusiasts!
-
-Here's what you can do:
-• 🏆 Explore and join exciting tournaments
-• 📊 Track your chess progress and statistics  
-• 🤝 Connect with fellow chess players
-• 🎯 Compete for prizes and recognition
-
-Ready to make your first move? Let's get started!`;
-      
-      try {
-        emailResult = await sendEmailNotification(
-          user,
-          title,
-          emailMessage,
-          'welcome'
-        );
-        console.log(`📧 Email result:`, emailResult);
-      } catch (emailError) {
-        console.error(`❌ Email error:`, emailError);
-        emailResult = { success: false, error: emailError.message };
-      }
+    try {
+      pushResult = await sendImmediatePushNotification(userId, title, message, {
+        priority: 'high',
+        requireInteraction: true
+      });
+      console.log(`📱 Immediate push result:`, pushResult);
+    } catch (pushError) {
+      console.error(`❌ Push notification error:`, pushError);
+      pushResult = { success: false, error: pushError.message };
     }
     
-    // STEP 5: Return comprehensive results
+    // STEP 4: Return comprehensive results
     const finalResult = {
-      success: pushResult.success || notificationResult?.success || false,
-      immediate: {
-        push: pushResult,
-        notification: notificationResult
-      },
-      email: emailResult,
+      success: notificationResult?.success || notificationResult?._id ? true : false,
+      notification: notificationResult,
+      push: pushResult,
       user: {
         id: user._id,
         email: user.email,
@@ -796,9 +881,9 @@ Ready to make your first move? Let's get started!`;
         pushSubscriptions: user.pushSubscriptions?.length || 0
       },
       summary: {
+        notificationCreated: notificationResult?._id ? true : false,
         pushSent: pushResult.sent || false,
-        notificationCreated: notificationResult?.success || false,
-        emailSent: emailResult.success && !emailResult.skipped
+        emailSent: notificationResult?.emailSent || false
       }
     };
     
