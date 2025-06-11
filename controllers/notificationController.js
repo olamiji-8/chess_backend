@@ -794,8 +794,7 @@ exports.unsubscribeFromPush = asyncHandler(async (req, res) => {
 });
 
 
-// 👋 Welcome to 64SQURS - Fixed version with proper enum handling
-// Trigger: When a user logs in for the first time using their Lichess ID
+// 👋 Welcome to 64SQURS - Fixed with valid enum type
 exports.notifyUserWelcome = async (userId) => {
   try {
     console.log(`🎯 Starting enhanced welcome notification process for user: ${userId}`);
@@ -813,38 +812,46 @@ exports.notifyUserWelcome = async (userId) => {
       fullName: user.fullName,
       email: user.email,
       lichessUsername: user.lichessUsername,
-      pushSubscriptions: user.pushSubscriptions?.length || 0
+      welcomeNotifications: user.notificationTypes?.welcome
     });
+    
+    // Check if user wants welcome notifications
+    if (!user.wantsNotification('welcome')) {
+      console.log(`🔕 User has disabled welcome notifications`);
+      return { 
+        success: true, 
+        skipped: true, 
+        reason: 'User disabled welcome notifications' 
+      };
+    }
     
     const title = "🎉 Welcome to 64SQURS!";
     const message = `Welcome ${user.lichessUsername || user.fullName}! You've successfully joined 64SQURS. Ready to dominate the chess world? 🏆`;
     
-    // STEP 2: Create in-app notification FIRST (most important for your issue)
+    // STEP 2: Create in-app notification using valid enum type
     console.log(`📱 Creating in-app notification...`);
     let notificationResult;
     
     try {
-      // 🔥 CRITICAL FIX: Use a valid enum type (change 'welcome' to valid type)
-      // Common notification types are usually: 'info', 'success', 'warning', 'error', 'system'
-      // Change 'welcome' to 'info' or 'system' - check your Notification schema for valid values
+      // 🔥 OPTION A: Use 'system_message' (existing valid enum)
       notificationResult = await exports.createNotification(
         userId,
         title,
         message,
-        'system', // 🔥 CHANGED: Use 'system' instead of 'welcome' (adjust based on your schema)
+        'system_message', // 🔥 Using valid enum value
         null,
         null,
         { 
-          sendEmail: true,  // Enable email
-          sendPush: true,   // Enable push
+          sendEmail: true,
+          sendPush: true,
           priority: 'high',
-          requireInteraction: true
+          requireInteraction: true,
+          welcomeType: true // Custom flag to identify this as welcome message
         }
       );
       
       console.log(`📱 In-app notification result:`, notificationResult);
       
-      // 🔍 DEBUGGING: Check if notification was actually created
       if (notificationResult && notificationResult._id) {
         console.log(`✅ Notification created successfully with ID: ${notificationResult._id}`);
         
@@ -862,8 +869,6 @@ exports.notifyUserWelcome = async (userId) => {
         } else {
           console.error(`❌ Notification not found in database after creation!`);
         }
-      } else {
-        console.error(`❌ createNotification returned null or invalid result`);
       }
       
     } catch (notificationError) {
@@ -874,21 +879,21 @@ exports.notifyUserWelcome = async (userId) => {
       };
     }
     
-    // STEP 3: Send push notification using existing function (fixed reference)
-    console.log(`🚀 Sending push notification...`);
+    // STEP 3: Send push notification if user has subscriptions
+    console.log(`🚀 Checking for push notification...`);
     let pushResult = { success: true, skipped: true };
     
     try {
-      // 🔥 FIXED: Use the existing sendPushNotification function instead of undefined one
-      if (user.pushSubscriptions?.length > 0) {
-        pushResult = await sendPushNotification(user, title, message, 'system', null, {
+      if (user.pushSubscription && user.pushSubscription.endpoint) {
+        console.log(`📱 Sending push notification to user...`);
+        pushResult = await sendPushNotification(user, title, message, 'system_message', null, {
           priority: 'high',
           requireInteraction: true
         });
         console.log(`📱 Push result:`, pushResult);
       } else {
-        console.log(`📱 No push subscriptions found, skipping push notification`);
-        pushResult = { success: true, skipped: true, reason: 'No push subscriptions' };
+        console.log(`📱 No push subscription found, skipping push notification`);
+        pushResult = { success: true, skipped: true, reason: 'No push subscription' };
       }
     } catch (pushError) {
       console.error(`❌ Push notification error:`, pushError);
@@ -897,14 +902,16 @@ exports.notifyUserWelcome = async (userId) => {
     
     // STEP 4: Return comprehensive results
     const finalResult = {
-      success: notificationResult?.success || notificationResult?._id ? true : false,
+      success: notificationResult?._id ? true : false,
       notification: notificationResult,
       push: pushResult,
       user: {
         id: user._id,
         email: user.email,
         lichessUsername: user.lichessUsername,
-        pushSubscriptions: user.pushSubscriptions?.length || 0
+        hasEmailNotifications: user.emailNotifications,
+        hasPushNotifications: user.pushNotifications,
+        wantsWelcomeNotifications: user.notificationTypes?.welcome
       },
       summary: {
         notificationCreated: notificationResult?._id ? true : false,

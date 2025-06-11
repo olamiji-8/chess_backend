@@ -18,6 +18,7 @@ const NotificationSchema = new mongoose.Schema({
   type: {
     type: String,
     enum: [
+      'welcome',                    // 🔥 ADDED: Welcome notification type
       'tournament_created',
       'tournament_registration',
       'tournament_reminder',
@@ -41,6 +42,22 @@ const NotificationSchema = new mongoose.Schema({
   isRead: {
     type: Boolean,
     default: false
+  },
+  emailSent: {
+    type: Boolean,
+    default: false
+  },
+  pushSent: {
+    type: Boolean,
+    default: false
+  },
+  emailError: {
+    type: String,
+    default: null
+  },
+  pushError: {
+    type: String,
+    default: null
   },
   createdAt: {
     type: Date,
