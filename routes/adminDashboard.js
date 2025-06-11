@@ -253,4 +253,27 @@ router.get('/activity/log', protect, adminOnly, adminController.getActivityLogs)
 router.get('/activity/summary', protect, adminOnly, adminController.getActivitySummary);
 router.post('/activity/log', protect, adminOnly, adminController.createActivityLog);
 
+
+// Add these routes to your existing admin router
+
+/**
+ * TOURNAMENT ACTIVITY MONITORING
+ */
+
+// Get comprehensive tournament activity overview
+router.get('/tournaments/activity', protect, adminOnly, adminController.getTournamentActivity);
+
+// Get specific tournament activity details
+router.get('/tournaments/:tournamentId/activity', protect, adminOnly, adminController.getTournamentActivityDetails);
+
+/**
+ * ADMIN PRIZE PAYOUT MANAGEMENT
+ */
+
+// Manually payout prizes to participants (when organizer hasn't paid)
+router.post('/tournaments/:tournamentId/payout', protect, adminOnly, adminController.adminPrizesPayout);
+
+// Get payout history for a tournament
+router.get('/tournaments/:tournamentId/payouts', protect, adminOnly, adminController.getTournamentPayouts);
+
 module.exports = router;

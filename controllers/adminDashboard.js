@@ -4474,3 +4474,694 @@ exports.createActivityLog = async (req, res) => {
     });
   }
 };
+
+
+// Add these functions to your adminController
+
+/**
+ * GET TOURNAMENT ACTIVITY OVERVIEW
+ * Route: GET /api/admin/tournaments/activity
+ * Description: Shows all tournament activities across the platform
+ */
+exports.getTournamentActivity = async (req, res) => {
+  try {
+    const { 
+      status = 'all', 
+      category = 'all', 
+      payoutStatus = 'all',
+      page = 1, 
+      limit = 20,
+      startDate,
+      endDate
+    } = req.query;
+
+    // Build filter query
+    let matchQuery = {};
+    
+    if (status !== 'all') {
+      matchQuery.status = status;
+    }
+    
+    if (category !== 'all') {
+      matchQuery.category = category;
+    }
+    
+    if (startDate || endDate) {
+      matchQuery.startDate = {};
+      if (startDate) matchQuery.startDate.$gte = new Date(startDate);
+      if (endDate) matchQuery.startDate.$lte = new Date(endDate);
+    }
+
+    // Aggregate pipeline to get comprehensive tournament data
+    const tournaments = await Tournament.aggregate([
+      { $match: matchQuery },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'organizer',
+          foreignField: '_id',
+          as: 'organizerDetails'
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'participants',
+          foreignField: '_id',
+          as: 'participantDetails'
+        }
+      },
+      {
+        $lookup: {
+          from: 'transactions',
+          let: { tournamentId: '$_id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$tournament', '$$tournamentId'] },
+                    { $in: ['$type', ['tournament_entry', 'tournament_funding', 'prize_payout']] }
+                  ]
+                }
+              }
+            }
+          ],
+          as: 'transactions'
+        }
+      },
+      {
+        $addFields: {
+          organizerInfo: { $arrayElemAt: ['$organizerDetails', 0] },
+          participantCount: { $size: '$participants' },
+          
+          // Calculate financial data
+          entryFeeCollected: {
+            $multiply: ['$entryFee', { $size: '$participants' }]
+          },
+          
+          // Get funding transactions
+          fundingTransactions: {
+            $filter: {
+              input: '$transactions',
+              cond: { $eq: ['$$this.type', 'tournament_funding'] }
+            }
+          },
+          
+          // Get payout transactions
+          payoutTransactions: {
+            $filter: {
+              input: '$transactions',
+              cond: { $eq: ['$$this.type', 'prize_payout'] }
+            }
+          },
+          
+          // Get entry fee transactions
+          entryTransactions: {
+            $filter: {
+              input: '$transactions',
+              cond: { $eq: ['$$this.type', 'tournament_entry'] }
+            }
+          }
+        }
+      },
+      {
+        $addFields: {
+          // Calculate total prize pool
+          totalPrizePool: {
+            $switch: {
+              branches: [
+                {
+                  case: { $eq: ['$prizeType', 'fixed'] },
+                  then: {
+                    $add: [
+                      '$prizes.fixed.1st',
+                      '$prizes.fixed.2nd',
+                      '$prizes.fixed.3rd',
+                      '$prizes.fixed.4th',
+                      '$prizes.fixed.5th',
+                      {
+                        $sum: {
+                          $map: {
+                            input: '$prizes.fixed.additional',
+                            as: 'prize',
+                            in: '$$prize.amount'
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  case: { $eq: ['$prizeType', 'percentage'] },
+                  then: '$prizes.percentage.basePrizePool'
+                }
+              ],
+              default: 0
+            }
+          },
+          
+          // Calculate funding status
+          totalFunded: {
+            $sum: {
+              $map: {
+                input: '$fundingTransactions',
+                as: 'funding',
+                in: {
+                  $cond: [
+                    { $eq: ['$$funding.status', 'completed'] },
+                    '$$funding.amount',
+                    0
+                  ]
+                }
+              }
+            }
+          },
+          
+          // Calculate total paid out
+          totalPaidOut: {
+            $sum: {
+              $map: {
+                input: '$payoutTransactions',
+                as: 'payout',
+                in: {
+                  $cond: [
+                    { $eq: ['$$payout.status', 'completed'] },
+                    '$$payout.amount',
+                    0
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        $addFields: {
+          // Determine payout status
+          payoutStatus: {
+            $cond: [
+              { $eq: ['$status', 'completed'] },
+              {
+                $cond: [
+                  { $gte: ['$totalPaidOut', '$totalPrizePool'] },
+                  'fully_paid',
+                  {
+                    $cond: [
+                      { $gt: ['$totalPaidOut', 0] },
+                      'partially_paid',
+                      'unpaid'
+                    ]
+                  }
+                ]
+              },
+              'pending'
+            ]
+          },
+          
+          // Check if properly funded
+          fundingStatus: {
+            $cond: [
+              { $gte: ['$totalFunded', '$totalPrizePool'] },
+              'fully_funded',
+              {
+                $cond: [
+                  { $gt: ['$totalFunded', 0] },
+                  'partially_funded',
+                  'unfunded'
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        $project: {
+          title: 1,
+          category: 1,
+          status: 1,
+          startDate: 1,
+          startTime: 1,
+          tournamentLink: 1,
+          participantCount: 1,
+          entryFee: 1,
+          entryFeeCollected: 1,
+          totalPrizePool: 1,
+          totalFunded: 1,
+          totalPaidOut: 1,
+          payoutStatus: 1,
+          fundingStatus: 1,
+          prizeType: 1,
+          prizes: 1,
+          organizerInfo: {
+            _id: 1,
+            fullName: 1,
+            email: 1,
+            lichessUsername: 1
+          },
+          participantDetails: {
+            _id: 1,
+            fullName: 1,
+            lichessUsername: 1
+          },
+          createdAt: 1
+        }
+      },
+      { $sort: { createdAt: -1 } },
+      { $skip: (page - 1) * limit },
+      { $limit: parseInt(limit) }
+    ]);
+
+    // Apply payout status filter if specified
+    let filteredTournaments = tournaments;
+    if (payoutStatus !== 'all') {
+      filteredTournaments = tournaments.filter(t => t.payoutStatus === payoutStatus);
+    }
+
+    // Get summary statistics
+    const totalCount = await Tournament.countDocuments(matchQuery);
+    
+    const summaryStats = await Tournament.aggregate([
+      { $match: matchQuery },
+      {
+        $group: {
+          _id: null,
+          totalTournaments: { $sum: 1 },
+          upcomingTournaments: {
+            $sum: { $cond: [{ $eq: ['$status', 'upcoming'] }, 1, 0] }
+          },
+          activeTournaments: {
+            $sum: { $cond: [{ $eq: ['$status', 'active'] }, 1, 0] }
+          },
+          completedTournaments: {
+            $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] }
+          }
+        }
+      }
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        tournaments: filteredTournaments,
+        pagination: {
+          currentPage: parseInt(page),
+          limit: parseInt(limit),
+          totalCount,
+          totalPages: Math.ceil(totalCount / limit)
+        },
+        summary: summaryStats[0] || {
+          totalTournaments: 0,
+          upcomingTournaments: 0,
+          activeTournaments: 0,
+          completedTournaments: 0
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting tournament activity:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving tournament activity',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * GET SPECIFIC TOURNAMENT ACTIVITY DETAILS
+ * Route: GET /api/admin/tournaments/:tournamentId/activity
+ * Description: Shows detailed activity for a specific tournament
+ */
+exports.getTournamentActivityDetails = async (req, res) => {
+  try {
+    const { tournamentId } = req.params;
+
+    // Get tournament with all related data
+    const tournament = await Tournament.findById(tournamentId)
+      .populate('organizer', 'fullName email lichessUsername walletBalance')
+      .populate('participants', 'fullName email lichessUsername walletBalance')
+      .lean();
+
+    if (!tournament) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tournament not found'
+      });
+    }
+
+    // Get all transactions related to this tournament
+    const transactions = await Transaction.find({ tournament: tournamentId })
+      .populate('user', 'fullName email lichessUsername')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Categorize transactions
+    const transactionsByType = {
+      funding: transactions.filter(t => t.type === 'tournament_funding'),
+      entries: transactions.filter(t => t.type === 'tournament_entry'),
+      payouts: transactions.filter(t => t.type === 'prize_payout'),
+      refunds: transactions.filter(t => t.type === 'refund')
+    };
+
+    // Calculate financial summary
+    const financialSummary = {
+      entryFeeCollected: tournament.participants.length * tournament.entryFee,
+      totalFunded: transactionsByType.funding
+        .filter(t => t.status === 'completed')
+        .reduce((sum, t) => sum + t.amount, 0),
+      totalPaidOut: transactionsByType.payouts
+        .filter(t => t.status === 'completed')
+        .reduce((sum, t) => sum + t.amount, 0),
+      pendingPayouts: transactionsByType.payouts
+        .filter(t => t.status === 'pending')
+        .reduce((sum, t) => sum + t.amount, 0)
+    };
+
+    // Calculate expected prize distribution
+    let expectedPrizes = [];
+    if (tournament.prizeType === 'fixed') {
+      const prizes = tournament.prizes.fixed;
+      ['1st', '2nd', '3rd', '4th', '5th'].forEach((position, index) => {
+        if (prizes[position] > 0) {
+          expectedPrizes.push({
+            position: position,
+            amount: prizes[position],
+            positionNumber: index + 1
+          });
+        }
+      });
+      
+      // Add additional prizes
+      if (prizes.additional && prizes.additional.length > 0) {
+        prizes.additional.forEach(prize => {
+          expectedPrizes.push({
+            position: `${prize.position}${getOrdinalSuffix(prize.position)}`,
+            amount: prize.amount,
+            positionNumber: prize.position
+          });
+        });
+      }
+    }
+
+    // Sort expected prizes by position
+    expectedPrizes.sort((a, b) => a.positionNumber - b.positionNumber);
+
+    // Check payout status for each expected prize
+    const prizePayoutStatus = expectedPrizes.map(prize => {
+      const payout = transactionsByType.payouts.find(t => 
+        t.metadata && t.metadata.position === prize.position
+      );
+      
+      return {
+        ...prize,
+        isPaid: payout ? payout.status === 'completed' : false,
+        payoutTransaction: payout || null,
+        recipient: payout ? payout.user : null
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        tournament,
+        transactions: transactionsByType,
+        financialSummary,
+        expectedPrizes: prizePayoutStatus,
+        payoutStatus: {
+          totalExpected: expectedPrizes.reduce((sum, p) => sum + p.amount, 0),
+          totalPaid: financialSummary.totalPaidOut,
+          remainingToPay: Math.max(0, expectedPrizes.reduce((sum, p) => sum + p.amount, 0) - financialSummary.totalPaidOut),
+          isFullyPaid: financialSummary.totalPaidOut >= expectedPrizes.reduce((sum, p) => sum + p.amount, 0)
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting tournament activity details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving tournament details',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * ADMIN PRIZE PAYOUT
+ * Route: POST /api/admin/tournaments/:tournamentId/payout
+ * Description: Allows admin to manually payout prizes when organizer hasn't paid
+ */
+exports.adminPrizesPayout = async (req, res) => {
+  try {
+    const { tournamentId } = req.params;
+    const { payouts, reason } = req.body;
+    
+    // Validate request body
+    if (!payouts || !Array.isArray(payouts) || payouts.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payouts array is required'
+      });
+    }
+
+    // Get tournament details
+    const tournament = await Tournament.findById(tournamentId)
+      .populate('organizer', 'fullName email lichessUsername')
+      .lean();
+
+    if (!tournament) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tournament not found'
+      });
+    }
+
+    if (tournament.status !== 'completed') {
+      return res.status(400).json({
+        success: false,
+        message: 'Can only payout completed tournaments'
+      });
+    }
+
+    const results = [];
+    const errors = [];
+
+    // Process each payout
+    for (const payout of payouts) {
+      try {
+        const { userId, position, amount } = payout;
+
+        // Validate payout data
+        if (!userId || !position || !amount || amount <= 0) {
+          errors.push({
+            payout,
+            error: 'Invalid payout data: userId, position, and amount are required'
+          });
+          continue;
+        }
+
+        // Check if user exists
+        const user = await User.findById(userId);
+        if (!user) {
+          errors.push({
+            payout,
+            error: 'User not found'
+          });
+          continue;
+        }
+
+        // Check if payout already exists for this position
+        const existingPayout = await Transaction.findOne({
+          tournament: tournamentId,
+          type: 'prize_payout',
+          'metadata.position': position,
+          status: { $in: ['completed', 'pending'] }
+        });
+
+        if (existingPayout) {
+          errors.push({
+            payout,
+            error: `Payout for position ${position} already exists`
+          });
+          continue;
+        }
+
+        // Create payout transaction
+        const payoutTransaction = new Transaction({
+          user: userId,
+          tournament: tournamentId,
+          type: 'prize_payout',
+          amount: amount,
+          reference: `ADMIN_PAYOUT_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          paymentMethod: 'wallet',
+          status: 'completed',
+          details: {
+            paidBy: 'admin',
+            adminId: req.user._id,
+            adminName: req.user.fullName,
+            reason: reason || 'Admin manual payout',
+            originalOrganizer: tournament.organizer._id
+          },
+          metadata: {
+            position: position,
+            tournamentTitle: tournament.title,
+            adminPayout: true
+          }
+        });
+
+        await payoutTransaction.save();
+
+        // Update user's wallet balance
+        await User.findByIdAndUpdate(userId, {
+          $inc: { walletBalance: amount }
+        });
+
+        // Create notification for user
+        const notification = new Notification({
+          user: userId,
+          title: 'Prize Payment Received',
+          message: `You've received ₦${amount.toLocaleString()} for finishing ${position} in "${tournament.title}"`,
+          type: 'transaction_success',
+          relatedId: payoutTransaction._id,
+          relatedModel: 'Transaction'
+        });
+
+        await notification.save();
+
+        results.push({
+          success: true,
+          payout: {
+            userId,
+            userName: user.fullName,
+            position,
+            amount,
+            transactionId: payoutTransaction._id
+          }
+        });
+
+      } catch (error) {
+        errors.push({
+          payout,
+          error: error.message
+        });
+      }
+    }
+
+    // Create activity log
+    const activityLog = {
+      adminId: req.user._id,
+      action: 'admin_prize_payout',
+      details: {
+        tournamentId,
+        tournamentTitle: tournament.title,
+        totalPayouts: results.length,
+        totalAmount: results.reduce((sum, r) => sum + r.payout.amount, 0),
+        errors: errors.length,
+        reason
+      },
+      timestamp: new Date()
+    };
+
+    // You can save this to an ActivityLog model if you have one
+
+    res.status(200).json({
+      success: true,
+      message: `Processed ${results.length} payouts successfully`,
+      data: {
+        successfulPayouts: results,
+        errors: errors,
+        summary: {
+          totalProcessed: payouts.length,
+          successful: results.length,
+          failed: errors.length,
+          totalAmountPaid: results.reduce((sum, r) => sum + r.payout.amount, 0)
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error processing admin prize payout:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error processing prize payouts',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * GET TOURNAMENT PAYOUTS
+ * Route: GET /api/admin/tournaments/:tournamentId/payouts
+ * Description: Get payout history for a specific tournament
+ */
+exports.getTournamentPayouts = async (req, res) => {
+  try {
+    const { tournamentId } = req.params;
+
+    // Get tournament details
+    const tournament = await Tournament.findById(tournamentId)
+      .select('title status prizeType prizes')
+      .lean();
+
+    if (!tournament) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tournament not found'
+      });
+    }
+
+    // Get all payout transactions for this tournament
+    const payouts = await Transaction.find({
+      tournament: tournamentId,
+      type: 'prize_payout'
+    })
+    .populate('user', 'fullName email lichessUsername')
+    .sort({ createdAt: -1 })
+    .lean();
+
+    // Calculate summary
+    const summary = {
+      totalPayouts: payouts.length,
+      completedPayouts: payouts.filter(p => p.status === 'completed').length,
+      pendingPayouts: payouts.filter(p => p.status === 'pending').length,
+      failedPayouts: payouts.filter(p => p.status === 'failed').length,
+      totalAmountPaid: payouts
+        .filter(p => p.status === 'completed')
+        .reduce((sum, p) => sum + p.amount, 0),
+      adminPayouts: payouts.filter(p => p.metadata && p.metadata.adminPayout).length
+    };
+
+    res.status(200).json({
+      success: true,
+      data: {
+        tournament: {
+          _id: tournament._id,
+          title: tournament.title,
+          status: tournament.status
+        },
+        payouts,
+        summary
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting tournament payouts:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving tournament payouts',
+      error: error.message
+    });
+  }
+};
+
+// Helper function for ordinal suffixes
+function getOrdinalSuffix(num) {
+  const j = num % 10;
+  const k = num % 100;
+  if (j === 1 && k !== 11) return "st";
+  if (j === 2 && k !== 12) return "nd";
+  if (j === 3 && k !== 13) return "rd";
+  return "th";
+}
