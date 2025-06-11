@@ -688,7 +688,8 @@ exports.createNotification = async (userId, title, message, type, relatedId = nu
       pushSent: notification.pushSent
     });
     
-    return notation;
+    // 🔥 FIXED: Return "notification" instead of "notation"
+    return notification;
   } catch (error) {
     console.error('❌ Error creating notification:', {
       message: error.message,
@@ -700,6 +701,23 @@ exports.createNotification = async (userId, title, message, type, relatedId = nu
     throw error; // Re-throw to handle in calling function
   }
 };
+
+// 🔥 ADDITIONAL: Helper function to check valid notification types
+exports.getValidNotificationTypes = async () => {
+  try {
+    // This will help you see what enum values are allowed
+    const schema = Notification.schema.paths.type;
+    if (schema && schema.enumValues) {
+      console.log('📋 Valid notification types:', schema.enumValues);
+      return schema.enumValues;
+    }
+    return ['info', 'success', 'warning', 'error', 'system']; // Default fallback
+  } catch (error) {
+    console.error('❌ Error getting notification types:', error);
+    return ['info', 'success', 'warning', 'error', 'system'];
+  }
+};
+
 
 // ==================== USER PREFERENCE MANAGEMENT ====================
 
@@ -776,7 +794,7 @@ exports.unsubscribeFromPush = asyncHandler(async (req, res) => {
 });
 
 
-// 👋 Welcome to 64SQURS - Enhanced with debugging
+// 👋 Welcome to 64SQURS - Fixed version with proper enum handling
 // Trigger: When a user logs in for the first time using their Lichess ID
 exports.notifyUserWelcome = async (userId) => {
   try {
@@ -806,12 +824,14 @@ exports.notifyUserWelcome = async (userId) => {
     let notificationResult;
     
     try {
-      // 🔥 CRITICAL FIX: Call createNotification with proper parameters
+      // 🔥 CRITICAL FIX: Use a valid enum type (change 'welcome' to valid type)
+      // Common notification types are usually: 'info', 'success', 'warning', 'error', 'system'
+      // Change 'welcome' to 'info' or 'system' - check your Notification schema for valid values
       notificationResult = await exports.createNotification(
         userId,
         title,
         message,
-        'welcome',
+        'system', // 🔥 CHANGED: Use 'system' instead of 'welcome' (adjust based on your schema)
         null,
         null,
         { 
@@ -854,16 +874,22 @@ exports.notifyUserWelcome = async (userId) => {
       };
     }
     
-    // STEP 3: Send IMMEDIATE push notification (secondary)
-    console.log(`🚀 Sending immediate push notification...`);
+    // STEP 3: Send push notification using existing function (fixed reference)
+    console.log(`🚀 Sending push notification...`);
     let pushResult = { success: true, skipped: true };
     
     try {
-      pushResult = await sendImmediatePushNotification(userId, title, message, {
-        priority: 'high',
-        requireInteraction: true
-      });
-      console.log(`📱 Immediate push result:`, pushResult);
+      // 🔥 FIXED: Use the existing sendPushNotification function instead of undefined one
+      if (user.pushSubscriptions?.length > 0) {
+        pushResult = await sendPushNotification(user, title, message, 'system', null, {
+          priority: 'high',
+          requireInteraction: true
+        });
+        console.log(`📱 Push result:`, pushResult);
+      } else {
+        console.log(`📱 No push subscriptions found, skipping push notification`);
+        pushResult = { success: true, skipped: true, reason: 'No push subscriptions' };
+      }
     } catch (pushError) {
       console.error(`❌ Push notification error:`, pushError);
       pushResult = { success: false, error: pushError.message };
@@ -904,7 +930,6 @@ exports.notifyUserWelcome = async (userId) => {
     };
   }
 };
-
 
 // ==================== TOURNAMENT NOTIFICATIONS ====================
 
