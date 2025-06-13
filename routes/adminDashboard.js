@@ -261,7 +261,7 @@ router.post('/activity/log', protect, adminOnly, adminController.createActivityL
  */
 
 // Get comprehensive tournament activity overview
-router.get('/tournaments/activity', protect, adminOnly, adminController.getTournamentActivity);
+router.get('/tournaments/activity/all', protect, adminOnly, adminController.getTournamentActivity);
 
 // Get specific tournament activity details
 router.get('/tournaments/:tournamentId/activity', protect, adminOnly, adminController.getTournamentActivityDetails);
