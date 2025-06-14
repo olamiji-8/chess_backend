@@ -31,14 +31,15 @@ exports.createTournament = asyncHandler(async (req, res) => {
       prizes,
       entryFee,
       fundingMethod,
-      password
+      tournamentLink, // Added tournamentLink to be provided by organizer
+      password // Password is now optional
     } = req.body;
     
     // Parse entry fee as number - MOVED THIS UP
     const parsedEntryFee = parseFloat(entryFee) || 0; // Default to 0 if invalid
     
-    // Validate required fields
-    if (!title || !category || !rules || !startDate || !startTime || !duration || !prizeType || !fundingMethod) {
+    // Validate required fields (removed password from required fields, added tournamentLink)
+    if (!title || !category || !rules || !startDate || !startTime || !duration || !prizeType || !fundingMethod || !tournamentLink) {
       return res.status(400).json({ 
         message: 'Missing required fields',
         missingFields: [
@@ -49,8 +50,17 @@ exports.createTournament = asyncHandler(async (req, res) => {
           !startTime ? 'startTime' : null,
           !duration ? 'duration' : null,
           !prizeType ? 'prizeType' : null,
-          !fundingMethod ? 'fundingMethod' : null
+          !fundingMethod ? 'fundingMethod' : null,
+          !tournamentLink ? 'tournamentLink' : null
         ].filter(Boolean)
+      });
+    }
+
+    // Validate tournament link format (basic URL validation)
+    const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/;
+    if (!urlPattern.test(tournamentLink)) {
+      return res.status(400).json({ 
+        message: 'Please provide a valid tournament link URL' 
       });
     }
 
@@ -252,9 +262,6 @@ exports.createTournament = asyncHandler(async (req, res) => {
       });
     }
 
-    // Generate unique tournament link
-    const tournamentLink = `https://lichess.org/tournament/${uuidv4()}`;
-
     // Parse duration as number in hours and convert to milliseconds
     // 1 hour = 3600000 milliseconds
     const durationInHours = parseFloat(duration) || 3; // Default to 3 hours if invalid
@@ -275,8 +282,8 @@ exports.createTournament = asyncHandler(async (req, res) => {
         entryFee: parsedEntryFee,
         fundingMethod,
         organizer: req.user.id,
-        tournamentLink,
-        password: password || null
+        tournamentLink, // Use the provided tournament link
+        password: password || null // Password is optional - only set if provided
       });
     
       console.log('Tournament created successfully:', tournament._id);
@@ -333,15 +340,12 @@ exports.createTournament = asyncHandler(async (req, res) => {
   }
 });
 
-// @desc    Get all tournaments with pagination and filters
-// @route   GET /api/tournaments
-// @access  Public
 exports.getTournaments = asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 10;
   const startIndex = (page - 1) * limit;
   const category = req.query.category;
-  const status = req.query.status || 'upcoming'; // Change default from 'active' to 'upcoming'
+  const status = req.query.status || 'upcoming';
   
   console.log('Fetching tournaments with params:', { 
     page, 
@@ -357,19 +361,15 @@ exports.getTournaments = asyncHandler(async (req, res) => {
     query.category = category;
   }
   
-  // Filter by status unless 'all' is specified
+  // First, update all tournament statuses
+  await updateAllTournamentStatuses();
+  
+  // Now apply status filter after updates
   if (status && status !== 'all') {
     query.status = status;
   }
 
-  console.log('Query filters:', query);
-
-  // First check if any tournaments exist at all (regardless of filters)
-  const allTournamentsCount = await Tournament.countDocuments({});
-  console.log('Total tournaments in database (no filters):', allTournamentsCount);
-
   const total = await Tournament.countDocuments(query);
-  console.log('Tournaments matching query:', total);
   
   const tournaments = await Tournament.find(query)
     .populate('organizer', 'fullName email')
@@ -382,12 +382,13 @@ exports.getTournaments = asyncHandler(async (req, res) => {
     .limit(limit)
     .sort({ startDate: 1 });
   
-  console.log(`Retrieved ${tournaments.length} tournaments`);
-  
-  // Convert duration from milliseconds to hours for client display
+  // Convert duration and add calculated fields
   const formattedTournaments = tournaments.map(tournament => {
     const tournamentObj = tournament.toObject();
     tournamentObj.durationInHours = tournament.duration / 3600000;
+    tournamentObj.startDateTime = tournament.getStartDateTime();
+    tournamentObj.endDateTime = tournament.getEndDateTime();
+    tournamentObj.currentStatus = tournament.currentStatus;
     return tournamentObj;
   });
   
@@ -402,6 +403,32 @@ exports.getTournaments = asyncHandler(async (req, res) => {
     data: formattedTournaments
   });
 });
+
+// Utility function to update all tournament statuses
+async function updateAllTournamentStatuses() {
+  try {
+    const tournaments = await Tournament.find({
+      status: { $in: ['upcoming', 'active'] },
+      manualStatusOverride: { $ne: true }
+    });
+
+    let updatedCount = 0;
+    
+    for (const tournament of tournaments) {
+      if (tournament.updateStatusBasedOnTime()) {
+        await tournament.save();
+        updatedCount++;
+      }
+    }
+
+    if (updatedCount > 0) {
+      console.log(`Updated status for ${updatedCount} tournaments`);
+    }
+  } catch (error) {
+    console.error('Error updating tournament statuses:', error);
+  }
+}
+
 
 // @desc    Get single tournament
 // @route   GET /api/tournaments/:id

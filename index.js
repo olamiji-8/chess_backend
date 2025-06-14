@@ -101,7 +101,14 @@ const puzzleRoutes = require('./routes/puzzleRoutes');
 // const adminPuzzleRoutes = require('./routes/adminPuzzleRoutes');
 const adminDashboard = require('./routes/adminDashboard');
 const notification = require('./routes/notificationRoutes');
+// const { updateTournamentStatuses } = require('./middleware/tournamentStatus');
+const { startTournamentStatusCron } = require('./utils/cronJobs');
 
+// // Apply middleware to tournament routes
+// app.use('/api/tournaments', updateTournamentStatuses);
+
+// Start cron job for automatic status updates
+startTournamentStatusCron();
 
 // Routes
 app.use('/api/tournaments', tournamentRoutes);
