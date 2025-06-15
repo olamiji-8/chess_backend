@@ -1,4 +1,3 @@
-
 const mongoose = require('mongoose');
 
 const TournamentSchema = new mongoose.Schema({
@@ -26,7 +25,13 @@ const TournamentSchema = new mongoose.Schema({
   },
   startTime: {
     type: String,
-    required: [true, 'Start time is required']
+    required: [true, 'Start time is required'],
+    validate: {
+      validator: function(v) {
+        return /^\d{1,2}:\d{2}$/.test(v);
+      },
+      message: 'Start time must be in HH:MM format'
+    }
   },
   duration: {
     type: Number, // In milliseconds
@@ -125,6 +130,12 @@ TournamentSchema.virtual('currentStatus').get(function() {
   const startDateTime = this.getStartDateTime();
   const endDateTime = this.getEndDateTime();
 
+  // Handle case where startDateTime is null
+  if (!startDateTime || !endDateTime) {
+    console.warn(`Tournament ${this._id} has invalid date/time data`);
+    return this.status; // Return current status as fallback
+  }
+
   if (now < startDateTime) {
     return 'upcoming';
   } else if (now >= startDateTime && now <= endDateTime) {
@@ -134,37 +145,91 @@ TournamentSchema.virtual('currentStatus').get(function() {
   }
 });
 
-// Helper method to combine startDate and startTime
+// Helper method to combine startDate and startTime with proper error handling
 TournamentSchema.methods.getStartDateTime = function() {
-  const startDate = new Date(this.startDate);
-  const [hours, minutes] = this.startTime.split(':').map(Number);
-  
-  startDate.setHours(hours, minutes, 0, 0);
-  return startDate;
+  try {
+    // Validate inputs
+    if (!this.startDate) {
+      console.error(`Tournament ${this._id} has no startDate`);
+      return null;
+    }
+
+    if (!this.startTime || typeof this.startTime !== 'string') {
+      console.error(`Tournament ${this._id} has invalid startTime:`, this.startTime);
+      return null;
+    }
+
+    // Validate startTime format
+    if (!/^\d{1,2}:\d{2}$/.test(this.startTime)) {
+      console.error(`Tournament ${this._id} has malformed startTime:`, this.startTime);
+      return null;
+    }
+
+    const startDate = new Date(this.startDate);
+    
+    // Check if startDate is valid
+    if (isNaN(startDate.getTime())) {
+      console.error(`Tournament ${this._id} has invalid startDate:`, this.startDate);
+      return null;
+    }
+
+    const [hours, minutes] = this.startTime.split(':').map(Number);
+    
+    // Validate parsed time values
+    if (isNaN(hours) || isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+      console.error(`Tournament ${this._id} has invalid time values - hours: ${hours}, minutes: ${minutes}`);
+      return null;
+    }
+    
+    startDate.setHours(hours, minutes, 0, 0);
+    return startDate;
+  } catch (error) {
+    console.error(`Error calculating start date/time for tournament ${this._id}:`, error);
+    return null;
+  }
 };
 
-// Helper method to calculate end time
+// Helper method to calculate end time with error handling
 TournamentSchema.methods.getEndDateTime = function() {
-  const startDateTime = this.getStartDateTime();
-  return new Date(startDateTime.getTime() + this.duration);
+  try {
+    const startDateTime = this.getStartDateTime();
+    
+    if (!startDateTime) {
+      return null;
+    }
+
+    if (!this.duration || typeof this.duration !== 'number' || this.duration <= 0) {
+      console.error(`Tournament ${this._id} has invalid duration:`, this.duration);
+      return null;
+    }
+
+    return new Date(startDateTime.getTime() + this.duration);
+  } catch (error) {
+    console.error(`Error calculating end date/time for tournament ${this._id}:`, error);
+    return null;
+  }
 };
 
 // Method to update status based on current time
 TournamentSchema.methods.updateStatusBasedOnTime = function() {
   if (!this.manualStatusOverride && this.status !== 'cancelled') {
-    const calculatedStatus = this.currentStatus;
-    
-    if (this.status !== calculatedStatus) {
-      this.status = calculatedStatus;
+    try {
+      const calculatedStatus = this.currentStatus;
       
-      // Track actual start/end times
-      if (calculatedStatus === 'active' && !this.actualStartTime) {
-        this.actualStartTime = new Date();
-      } else if (calculatedStatus === 'completed' && !this.actualEndTime) {
-        this.actualEndTime = new Date();
+      if (this.status !== calculatedStatus) {
+        this.status = calculatedStatus;
+        
+        // Track actual start/end times
+        if (calculatedStatus === 'active' && !this.actualStartTime) {
+          this.actualStartTime = new Date();
+        } else if (calculatedStatus === 'completed' && !this.actualEndTime) {
+          this.actualEndTime = new Date();
+        }
+        
+        return true; // Status was updated
       }
-      
-      return true; // Status was updated
+    } catch (error) {
+      console.error(`Error updating status for tournament ${this._id}:`, error);
     }
   }
   return false; // No update needed
@@ -172,8 +237,13 @@ TournamentSchema.methods.updateStatusBasedOnTime = function() {
 
 // Pre-save hook to update status automatically
 TournamentSchema.pre('save', function(next) {
-  this.updateStatusBasedOnTime();
-  next();
+  try {
+    this.updateStatusBasedOnTime();
+    next();
+  } catch (error) {
+    console.error(`Error in pre-save hook for tournament ${this._id}:`, error);
+    next(error);
+  }
 });
 
 // Ensure virtual fields are included in JSON output
