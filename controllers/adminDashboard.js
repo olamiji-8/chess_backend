@@ -4483,6 +4483,18 @@ exports.createActivityLog = async (req, res) => {
  * Route: GET /api/admin/tournaments/activity
  * Description: Shows all tournament activities across the platform
  */
+/**
+ * Helper function to validate ObjectId
+ */
+function isValidObjectId(id) {
+  return mongoose.Types.ObjectId.isValid(id) && /^[0-9a-fA-F]{24}$/.test(id);
+}
+
+/**
+ * GET TOURNAMENT ACTIVITY OVERVIEW
+ * Route: GET /api/admin/tournaments/activity
+ * Description: Shows all tournament activities across the platform
+ */
 exports.getTournamentActivity = async (req, res) => {
   try {
     const { 
@@ -4595,17 +4607,17 @@ exports.getTournamentActivity = async (req, res) => {
                   case: { $eq: ['$prizeType', 'fixed'] },
                   then: {
                     $add: [
-                      '$prizes.fixed.1st',
-                      '$prizes.fixed.2nd',
-                      '$prizes.fixed.3rd',
-                      '$prizes.fixed.4th',
-                      '$prizes.fixed.5th',
+                      { $ifNull: ['$prizes.fixed.1st', 0] },
+                      { $ifNull: ['$prizes.fixed.2nd', 0] },
+                      { $ifNull: ['$prizes.fixed.3rd', 0] },
+                      { $ifNull: ['$prizes.fixed.4th', 0] },
+                      { $ifNull: ['$prizes.fixed.5th', 0] },
                       {
                         $sum: {
                           $map: {
-                            input: '$prizes.fixed.additional',
+                            input: { $ifNull: ['$prizes.fixed.additional', []] },
                             as: 'prize',
-                            in: '$$prize.amount'
+                            in: { $ifNull: ['$$prize.amount', 0] }
                           }
                         }
                       }
@@ -4614,7 +4626,7 @@ exports.getTournamentActivity = async (req, res) => {
                 },
                 {
                   case: { $eq: ['$prizeType', 'percentage'] },
-                  then: '$prizes.percentage.basePrizePool'
+                  then: { $ifNull: ['$prizes.percentage.basePrizePool', 0] }
                 }
               ],
               default: 0
@@ -4798,6 +4810,14 @@ exports.getTournamentActivityDetails = async (req, res) => {
   try {
     const { tournamentId } = req.params;
 
+    // Validate ObjectId
+    if (!isValidObjectId(tournamentId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid tournament ID format'
+      });
+    }
+
     // Get tournament with all related data
     const tournament = await Tournament.findById(tournamentId)
       .populate('organizer', 'fullName email lichessUsername walletBalance')
@@ -4916,13 +4936,31 @@ exports.getTournamentActivityDetails = async (req, res) => {
 exports.adminPrizesPayout = async (req, res) => {
   try {
     const { tournamentId } = req.params;
-    const { payouts, reason } = req.body;
     
+    // Validate ObjectId FIRST
+    if (!isValidObjectId(tournamentId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid tournament ID format'
+      });
+    }
+
     // Validate request body
+    let payouts, reason;
+    try {
+      ({ payouts, reason } = req.body);
+    } catch (parseError) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid JSON in request body',
+        error: parseError.message
+      });
+    }
+    
     if (!payouts || !Array.isArray(payouts) || payouts.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'Payouts array is required'
+        message: 'Payouts array is required and must not be empty'
       });
     }
 
@@ -4958,6 +4996,15 @@ exports.adminPrizesPayout = async (req, res) => {
           errors.push({
             payout,
             error: 'Invalid payout data: userId, position, and amount are required'
+          });
+          continue;
+        }
+
+        // Validate userId
+        if (!isValidObjectId(userId)) {
+          errors.push({
+            payout,
+            error: 'Invalid user ID format'
           });
           continue;
         }
@@ -5042,6 +5089,7 @@ exports.adminPrizesPayout = async (req, res) => {
         });
 
       } catch (error) {
+        console.error('Error processing individual payout:', error);
         errors.push({
           payout,
           error: error.message
@@ -5049,7 +5097,7 @@ exports.adminPrizesPayout = async (req, res) => {
       }
     }
 
-    // Create activity log
+    // Create activity log (if you have an ActivityLog model)
     const activityLog = {
       adminId: req.user._id,
       action: 'admin_prize_payout',
@@ -5064,7 +5112,8 @@ exports.adminPrizesPayout = async (req, res) => {
       timestamp: new Date()
     };
 
-    // You can save this to an ActivityLog model if you have one
+    // Log the activity (uncomment if you have ActivityLog model)
+    // await ActivityLog.create(activityLog);
 
     res.status(200).json({
       success: true,
@@ -5099,6 +5148,14 @@ exports.adminPrizesPayout = async (req, res) => {
 exports.getTournamentPayouts = async (req, res) => {
   try {
     const { tournamentId } = req.params;
+
+    // Validate ObjectId
+    if (!isValidObjectId(tournamentId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid tournament ID format'
+      });
+    }
 
     // Get tournament details
     const tournament = await Tournament.findById(tournamentId)

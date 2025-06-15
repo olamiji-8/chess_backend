@@ -261,11 +261,97 @@ exports.createTournament = asyncHandler(async (req, res) => {
         message: 'Please complete the payment to fund your tournament'
       });
     }
+// Helper function to parse duration string to milliseconds
+const parseDurationToMs = (durationStr) => {
+  if (!durationStr || typeof durationStr !== 'string') {
+    throw new Error('Invalid duration format');
+  }
+  
+  // Remove spaces and convert to lowercase
+  const duration = durationStr.trim().toLowerCase();
+  
+  // Extract number and unit
+  const match = duration.match(/^(\d+(?:\.\d+)?)\s*([a-z]+)$/);
+  
+  if (!match) {
+    throw new Error('Invalid duration format. Use formats like: 30m, 1.5h, 2h, 90m');
+  }
+  
+  const value = parseFloat(match[1]);
+  const unit = match[2];
+  
+  // Convert to milliseconds based on unit
+  switch (unit) {
+    case 's':
+    case 'sec':
+    case 'second':
+    case 'seconds':
+      return value * 1000;
+      
+    case 'm':
+    case 'min':
+    case 'minute':
+    case 'minutes':
+      return value * 60 * 1000;
+      
+    case 'h':
+    case 'hr':
+    case 'hour':
+    case 'hours':
+      return value * 60 * 60 * 1000;
+      
+    case 'd':
+    case 'day':
+    case 'days':
+      return value * 24 * 60 * 60 * 1000;
+      
+    default:
+      throw new Error(`Unsupported time unit: ${unit}. Supported units: s, m, h, d`);
+  }
+};
 
-    // Parse duration as number in hours and convert to milliseconds
-    // 1 hour = 3600000 milliseconds
-    const durationInHours = parseFloat(duration) || 3; // Default to 3 hours if invalid
-    const durationInMs = durationInHours * 3600000;
+// Helper function to convert milliseconds to readable duration
+const msToReadableDuration = (ms) => {
+  if (!ms || ms < 0) {
+    return '0 minutes';
+  }
+  
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  
+  if (days > 0) {
+    const remainingHours = hours % 24;
+    if (remainingHours > 0) {
+      return `${days} day${days > 1 ? 's' : ''} ${remainingHours} hour${remainingHours > 1 ? 's' : ''}`;
+    }
+    return `${days} day${days > 1 ? 's' : ''}`;
+  }
+  
+  if (hours > 0) {
+    const remainingMinutes = minutes % 60;
+    if (remainingMinutes > 0) {
+      return `${hours} hour${hours > 1 ? 's' : ''} ${remainingMinutes} minute${remainingMinutes > 1 ? 's' : ''}`;
+    }
+    return `${hours} hour${hours > 1 ? 's' : ''}`;
+  }
+  
+  if (minutes > 0) {
+    return `${minutes} minute${minutes > 1 ? 's' : ''}`;
+  }
+  
+  return `${seconds} second${seconds > 1 ? 's' : ''}`;
+};
+
+module.exports = {
+  parseDurationToMs,
+  msToReadableDuration
+};
+
+const durationInMs = parseDurationToMs(duration);
+
+console.log(`Parsed duration: ${duration} → ${durationInMs}ms → ${msToReadableDuration(durationInMs)}`);
 
     try {
       // Create tournament with normalized data
