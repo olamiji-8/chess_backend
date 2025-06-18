@@ -962,13 +962,23 @@ exports.notifyTournamentCreated = async (organizerId, tournamentId, tournamentTi
 
 // ✅ You have successfully registered for [Tournament Title].
 // Trigger: Immediately after a user completes payment and registration for any tournament
-exports.notifyTournamentRegistration = async (userId, tournamentId, tournamentTitle) => {
+exports.notifyTournamentRegistration = async (userId, tournamentId, tournamentTitle, tournamentLink, tournamentPassword = null) => {
   try {
     // Dynamic tournament title insertion as per documentation
     const title = `✅ You have successfully registered for ${tournamentTitle}.`;
     
     // Message content matches documentation exactly
-    const message = `Your seat is secured! You've successfully registered for the ${tournamentTitle}. Make sure to prepare ahead and bring your A-game. We'll notify you when it's about to begin. Good luck!`;
+    let message = `Your seat is secured! You've successfully registered for the ${tournamentTitle}. Make sure to prepare ahead and bring your A-game. We'll notify you when it's about to begin.`;
+    
+    // Add tournament link
+    message += ` Tournament Link: ${tournamentLink}`;
+    
+    // Add password if provided
+    if (tournamentPassword && tournamentPassword.trim() !== '') {
+      message += ` Password: ${tournamentPassword}`;
+    }
+    
+    message += ` Good luck!`;
     
     // Real-time trigger (within seconds after successful registration and payment confirmation)
     return await exports.createNotification(
@@ -984,6 +994,7 @@ exports.notifyTournamentRegistration = async (userId, tournamentId, tournamentTi
     return null;
   }
 };
+
 // Notify organizer when someone registers for their tournament
 exports.notifyOrganizerNewRegistration = async (organizerId, tournamentId, tournamentTitle, participantName) => {
   try {
