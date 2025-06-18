@@ -349,9 +349,19 @@ module.exports = {
   msToReadableDuration
 };
 
-const durationInMs = parseDurationToMs(duration);
+const durationInHours = parseFloat(duration);
 
-console.log(`Parsed duration: ${duration} → ${durationInMs}ms → ${msToReadableDuration(durationInMs)}`);
+// Validate duration
+if (isNaN(durationInHours) || durationInHours <= 0) {
+  return res.status(400).json({
+    message: 'Invalid duration. Duration must be a positive number representing hours.',
+    error: 'Duration validation failed'
+  });
+}
+// Convert hours to milliseconds
+const durationInMs = durationInHours * 60 * 60 * 1000;
+
+console.log(`Duration: ${durationInHours} hours → ${durationInMs}ms`);
 
     try {
       // Create tournament with normalized data
