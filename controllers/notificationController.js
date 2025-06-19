@@ -960,8 +960,8 @@ exports.notifyTournamentCreated = async (organizerId, tournamentId, tournamentTi
   }
 };
 
-// ✅ You have successfully registered for [Tournament Title].
-// Trigger: Immediately after a user completes payment and registration for any tournament
+// Option 1: Pass tournament data directly when you have it
+// Use this when calling from your registration endpoint where you have all the data
 exports.notifyTournamentRegistration = async (userId, tournamentId, tournamentTitle, tournamentLink, tournamentPassword = null) => {
   try {
     // Dynamic tournament title insertion as per documentation
@@ -994,6 +994,7 @@ exports.notifyTournamentRegistration = async (userId, tournamentId, tournamentTi
     return null;
   }
 };
+
 
 // Notify organizer when someone registers for their tournament
 exports.notifyOrganizerNewRegistration = async (organizerId, tournamentId, tournamentTitle, participantName) => {
