@@ -960,22 +960,62 @@ exports.notifyTournamentCreated = async (organizerId, tournamentId, tournamentTi
   }
 };
 
-// Option 1: Pass tournament data directly when you have it
-// Use this when calling from your registration endpoint where you have all the data
-exports.notifyTournamentRegistration = async (userId, tournamentId, tournamentTitle, tournamentLink, tournamentPassword = null) => {
+// // Option 1: Pass tournament data directly when you have it
+// // Use this when calling from your registration endpoint where you have all the data
+// exports.notifyTournamentRegistration = async (userId, tournamentId, tournamentTitle, tournamentLink, tournamentPassword = null) => {
+//   try {
+//     // Dynamic tournament title insertion as per documentation
+//     const title = `✅ You have successfully registered for ${tournamentTitle}.`;
+    
+//     // Message content matches documentation exactly
+//     let message = `Your seat is secured! You've successfully registered for the ${tournamentTitle}. Make sure to prepare ahead and bring your A-game. We'll notify you when it's about to begin.`;
+    
+//     // Add tournament link
+//     message += ` Tournament Link: ${tournamentLink}`;
+    
+//     // Add password if provided
+//     if (tournamentPassword && tournamentPassword.trim() !== '') {
+//       message += ` Password: ${tournamentPassword}`;
+//     }
+    
+//     message += ` Good luck!`;
+    
+//     // Real-time trigger (within seconds after successful registration and payment confirmation)
+//     return await exports.createNotification(
+//       userId,
+//       title,
+//       message,
+//       'tournament_registration',
+//       tournamentId,
+//       'Tournament'
+//     );
+//   } catch (error) {
+//     console.error('Error sending tournament registration notification:', error);
+//     return null;
+//   }
+// };
+
+exports.notifyTournamentRegistration = async (userId, tournamentId) => {
   try {
+    const Tournament = require('../models/Tournament');
+    const tournament = await Tournament.findById(tournamentId);
+    
+    if (!tournament) {
+      throw new Error(`Tournament not found with ID: ${tournamentId}`);
+    }
+    
     // Dynamic tournament title insertion as per documentation
-    const title = `✅ You have successfully registered for ${tournamentTitle}.`;
+    const title = `✅ You have successfully registered for ${tournament.title}.`;
     
     // Message content matches documentation exactly
-    let message = `Your seat is secured! You've successfully registered for the ${tournamentTitle}. Make sure to prepare ahead and bring your A-game. We'll notify you when it's about to begin.`;
+    let message = `Your seat is secured! You've successfully registered for the ${tournament.title}. Make sure to prepare ahead and bring your A-game. We'll notify you when it's about to begin.`;
     
     // Add tournament link
-    message += ` Tournament Link: ${tournamentLink}`;
+    message += ` Tournament Link: ${tournament.tournamentLink}`;
     
     // Add password if provided
-    if (tournamentPassword && tournamentPassword.trim() !== '') {
-      message += ` Password: ${tournamentPassword}`;
+    if (tournament.password && tournament.password.trim() !== '') {
+      message += ` Password: ${tournament.password}`;
     }
     
     message += ` Good luck!`;
