@@ -32,14 +32,14 @@ exports.createTournament = asyncHandler(async (req, res) => {
       prizes,
       entryFee,
       fundingMethod,
-      tournamentLink, // Added tournamentLink to be provided by organizer
-      password // Password is now optional
+      tournamentLink,
+      password
     } = req.body;
     
-    // Parse entry fee as number - MOVED THIS UP
-    const parsedEntryFee = parseFloat(entryFee) || 0; // Default to 0 if invalid
+    // Parse entry fee as number
+    const parsedEntryFee = parseFloat(entryFee) || 0;
     
-    // Validate required fields (removed password from required fields, added tournamentLink)
+    // Validate required fields
     if (!title || !category || !rules || !startDate || !startTime || !duration || !prizeType || !fundingMethod || !tournamentLink) {
       return res.status(400).json({ 
         message: 'Missing required fields',
@@ -57,7 +57,7 @@ exports.createTournament = asyncHandler(async (req, res) => {
       });
     }
 
-    // Validate tournament link format (basic URL validation)
+    // Validate tournament link format
     const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/;
     if (!urlPattern.test(tournamentLink)) {
       return res.status(400).json({ 
@@ -65,13 +65,39 @@ exports.createTournament = asyncHandler(async (req, res) => {
       });
     }
 
-    // Add this validation in your backend
+    // Validate time format
     const timePattern = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
     if (!timePattern.test(startTime)) {
       return res.status(400).json({ 
         message: 'Invalid time format. Expected HH:MM in 24-hour format' 
-    });
-}
+      });
+    }
+
+    // Parse and validate duration
+    const durationInHours = parseFloat(duration);
+    console.log('Duration received:', duration, 'Parsed:', durationInHours);
+
+    if (isNaN(durationInHours) || durationInHours <= 0) {
+      return res.status(400).json({
+        message: 'Invalid duration. Duration must be a positive number.',
+        receivedDuration: duration,
+        parsedDuration: durationInHours
+      });
+    }
+
+    // Set minimum duration (5 minutes = 5/60 hours = 0.083 hours)
+    const minimumDurationHours = 5 / 60; // 5 minutes in hours
+    if (durationInHours < minimumDurationHours) {
+      return res.status(400).json({
+        message: `Tournament duration must be at least 5 minutes.`,
+        receivedDuration: `${durationInHours} hours`,
+        minimumRequired: `${minimumDurationHours} hours (5 minutes)`
+      });
+    }
+
+    // Convert hours to milliseconds for storage
+    const durationInMs = durationInHours * 60 * 60 * 1000;
+    console.log(`Duration: ${durationInHours} hours → ${durationInMs}ms`);
 
     // Upload banner image to cloudinary
     let bannerUrl = '';
@@ -81,7 +107,6 @@ exports.createTournament = asyncHandler(async (req, res) => {
           folder: 'tournament_banners'
         });
         bannerUrl = result.secure_url;
-        // Delete file from server after upload
         fs.unlinkSync(req.file.path);
       } catch (cloudinaryError) {
         console.error('Cloudinary upload error:', cloudinaryError);
@@ -97,7 +122,6 @@ exports.createTournament = asyncHandler(async (req, res) => {
     // Initialize default prize structure based on prizeType
     let normalizedPrizes = {};
     
-    // Normalize prizes structure based on prizeType
     if (prizeType === 'fixed') {
       normalizedPrizes = {
         fixed: {
@@ -110,26 +134,21 @@ exports.createTournament = asyncHandler(async (req, res) => {
         }
       };
       
-      // If prizes.fixed exists and is an object, try to extract values
       if (prizes && prizes.fixed && typeof prizes.fixed === 'object') {
         console.log('Prizes fixed object:', JSON.stringify(prizes.fixed));
         
-        // Parse numeric values from the prizes.fixed object
         if (prizes.fixed['1st']) normalizedPrizes.fixed['1st'] = parseFloat(prizes.fixed['1st']) || 0;
         if (prizes.fixed['2nd']) normalizedPrizes.fixed['2nd'] = parseFloat(prizes.fixed['2nd']) || 0;
         if (prizes.fixed['3rd']) normalizedPrizes.fixed['3rd'] = parseFloat(prizes.fixed['3rd']) || 0;
         if (prizes.fixed['4th']) normalizedPrizes.fixed['4th'] = parseFloat(prizes.fixed['4th']) || 0;
         if (prizes.fixed['5th']) normalizedPrizes.fixed['5th'] = parseFloat(prizes.fixed['5th']) || 0;
         
-        // Handle additional prizes if they exist
         if (prizes.fixed.additional && Array.isArray(prizes.fixed.additional)) {
           normalizedPrizes.fixed.additional = prizes.fixed.additional.map(prize => ({
             position: parseInt(prize.position) || 0,
             amount: parseFloat(prize.amount) || 0
           }));
         }
-      } else {
-        console.warn('Invalid or missing prizes.fixed structure');
       }
     } else if (prizeType === 'percentage') {
       normalizedPrizes = {
@@ -144,7 +163,6 @@ exports.createTournament = asyncHandler(async (req, res) => {
         }
       };
       
-      // Similar parsing for percentage prizes
       if (prizes && prizes.percentage && typeof prizes.percentage === 'object') {
         if (prizes.percentage.basePrizePool) normalizedPrizes.percentage.basePrizePool = parseFloat(prizes.percentage.basePrizePool) || 0;
         if (prizes.percentage['1st']) normalizedPrizes.percentage['1st'] = parseFloat(prizes.percentage['1st']) || 0;
@@ -189,26 +207,21 @@ exports.createTournament = asyncHandler(async (req, res) => {
     let totalPrizePool = 0;
     try {
       if (prizeType === 'fixed') {
-        // Sum all fixed prizes
         totalPrizePool = normalizedPrizes.fixed['1st'] + 
                         normalizedPrizes.fixed['2nd'] + 
                         normalizedPrizes.fixed['3rd'] + 
                         normalizedPrizes.fixed['4th'] + 
                         normalizedPrizes.fixed['5th'];
                         
-        // Add additional prizes if any
         if (normalizedPrizes.fixed.additional && normalizedPrizes.fixed.additional.length) {
           totalPrizePool += normalizedPrizes.fixed.additional.reduce((sum, prize) => sum + (prize.amount || 0), 0);
         }
       } else if (prizeType === 'percentage') {
-        // For percentage, we use the base prize pool
         totalPrizePool = normalizedPrizes.percentage.basePrizePool || 0;
       } else if (prizeType === 'special') {
         if (normalizedPrizes.special.isFixed) {
-          // Calculate total from special prizes
           totalPrizePool = normalizedPrizes.special.specialPrizes.reduce((sum, prize) => sum + (prize.amount || 0), 0);
         } else {
-          // For percentage-based special prizes, use the base prize pool
           totalPrizePool = normalizedPrizes.special.basePrizePool || 0;
         }
       }
@@ -231,10 +244,10 @@ exports.createTournament = asyncHandler(async (req, res) => {
       });
     }
     
-    // Generate unique transaction reference that we can use later
+    // Generate unique transaction reference
     const transactionReference = `FUND-${uuidv4().slice(0,8)}`;
 
-    // Check user wallet balance if funding from wallet
+    // Handle funding method
     if (fundingMethod === 'wallet') {
       try {
         const user = await User.findById(req.user.id);
@@ -250,7 +263,6 @@ exports.createTournament = asyncHandler(async (req, res) => {
           });
         }
 
-        // Deduct from wallet
         user.walletBalance -= totalPrizePool;
         await user.save();
         
@@ -262,7 +274,6 @@ exports.createTournament = asyncHandler(async (req, res) => {
         });
       }
     } else if (fundingMethod === 'topup') {
-      // Direct user to payment page to top up their wallet
       return res.status(200).json({
         success: false,
         redirectToTopup: true,
@@ -270,118 +281,6 @@ exports.createTournament = asyncHandler(async (req, res) => {
         message: 'Please complete the payment to fund your tournament'
       });
     }
-// Helper function to parse duration string to milliseconds
-const parseDurationToMs = (durationStr) => {
-  if (!durationStr || typeof durationStr !== 'string') {
-    throw new Error('Invalid duration format');
-  }
-  
-  // Remove spaces and convert to lowercase
-  const duration = durationStr.trim().toLowerCase();
-  
-  // Extract number and unit
-  const match = duration.match(/^(\d+(?:\.\d+)?)\s*([a-z]+)$/);
-  
-  if (!match) {
-    throw new Error('Invalid duration format. Use formats like: 30m, 1.5h, 2h, 90m');
-  }
-  
-  const value = parseFloat(match[1]);
-  const unit = match[2];
-  
-  // Convert to milliseconds based on unit
-  switch (unit) {
-    case 's':
-    case 'sec':
-    case 'second':
-    case 'seconds':
-      return value * 1000;
-      
-    case 'm':
-    case 'min':
-    case 'minute':
-    case 'minutes':
-      return value * 60 * 1000;
-      
-    case 'h':
-    case 'hr':
-    case 'hour':
-    case 'hours':
-      return value * 60 * 60 * 1000;
-      
-    case 'd':
-    case 'day':
-    case 'days':
-      return value * 24 * 60 * 60 * 1000;
-      
-    default:
-      throw new Error(`Unsupported time unit: ${unit}. Supported units: s, m, h, d`);
-  }
-};
-
-// Helper function to convert milliseconds to readable duration
-const msToReadableDuration = (ms) => {
-  if (!ms || ms < 0) {
-    return '0 minutes';
-  }
-  
-  const seconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-  
-  if (days > 0) {
-    const remainingHours = hours % 24;
-    if (remainingHours > 0) {
-      return `${days} day${days > 1 ? 's' : ''} ${remainingHours} hour${remainingHours > 1 ? 's' : ''}`;
-    }
-    return `${days} day${days > 1 ? 's' : ''}`;
-  }
-  
-  if (hours > 0) {
-    const remainingMinutes = minutes % 60;
-    if (remainingMinutes > 0) {
-      return `${hours} hour${hours > 1 ? 's' : ''} ${remainingMinutes} minute${remainingMinutes > 1 ? 's' : ''}`;
-    }
-    return `${hours} hour${hours > 1 ? 's' : ''}`;
-  }
-  
-  if (minutes > 0) {
-    return `${minutes} minute${minutes > 1 ? 's' : ''}`;
-  }
-  
-  return `${seconds} second${seconds > 1 ? 's' : ''}`;
-};
-
-module.exports = {
-  parseDurationToMs,
-  msToReadableDuration
-};
-
-const durationInHours = parseFloat(duration);
-
-// Validate duration
-if (isNaN(durationInHours) || durationInHours < 0) {
-  return res.status(400).json({
-    message: 'Invalid duration. Duration cannot be negative.',
-    error: 'Duration validation failed'
-  });
-}
-// Additional check to ensure at least some minimum duration (optional)
-const minimumDurationMinutes = 5; // 5 minutes minimum
-const durationInMinutes = durationInHours * 60;
-
-if (durationInMinutes < minimumDurationMinutes && durationInMinutes > 0) {
-  return res.status(400).json({
-    message: `Tournament duration must be at least ${minimumDurationMinutes} minutes.`,
-    error: 'Duration too short'
-  });
-}
-
-// Convert hours to milliseconds (rest of your code remains the same)
-const durationInMs = durationInHours * 60 * 60 * 1000;
-
-console.log(`Duration: ${durationInHours} hours → ${durationInMs}ms`);
 
     try {
       // Create tournament with normalized data
@@ -392,19 +291,19 @@ console.log(`Duration: ${durationInHours} hours → ${durationInMs}ms`);
         rules,
         startDate: new Date(startDate),
         startTime,
-        duration: durationInMs,
+        duration: durationInMs, // Store in milliseconds
         prizeType,
         prizes: normalizedPrizes,
         entryFee: parsedEntryFee,
         fundingMethod,
         organizer: req.user.id,
-        tournamentLink, // Use the provided tournament link
-        password: password || null // Password is optional - only set if provided
+        tournamentLink,
+        password: password || null
       });
     
       console.log('Tournament created successfully:', tournament._id);
     
-      // Create transaction record now that we have the tournament ID
+      // Create transaction record
       if (fundingMethod === 'wallet') {
         try {
           const transaction = await Transaction.create({
@@ -428,7 +327,7 @@ console.log(`Duration: ${durationInHours} hours → ${durationInMs}ms`);
       });
       console.log('Tournament added to user\'s created tournaments');
 
-      // Schedule 5-minute reminder notification
+      // Schedule tournament reminder
       await scheduleTournamentReminder(tournament._id, tournament.startDate, tournament.startTime);
     
       res.status(201).json({
@@ -437,7 +336,6 @@ console.log(`Duration: ${durationInHours} hours → ${durationInMs}ms`);
       });
     } catch (createError) {
       console.error('Tournament creation error details:', createError);
-      // Print detailed validation errors if they exist
       if (createError.errors) {
         console.error('Validation errors:', JSON.stringify(createError.errors));
       }
