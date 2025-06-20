@@ -1,3 +1,4 @@
+  const mongoose = require('mongoose'); 
   const Tournament = require('../models/Tournament');
   const User = require('../models/User');
   const Transaction = require('../models/Transaction');
@@ -63,6 +64,14 @@ exports.createTournament = asyncHandler(async (req, res) => {
         message: 'Please provide a valid tournament link URL' 
       });
     }
+
+    // Add this validation in your backend
+    const timePattern = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timePattern.test(startTime)) {
+      return res.status(400).json({ 
+        message: 'Invalid time format. Expected HH:MM in 24-hour format' 
+    });
+}
 
     // Upload banner image to cloudinary
     let bannerUrl = '';
