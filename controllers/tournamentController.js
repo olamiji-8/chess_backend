@@ -361,13 +361,24 @@ module.exports = {
 const durationInHours = parseFloat(duration);
 
 // Validate duration
-if (isNaN(durationInHours) || durationInHours <= 0) {
+if (isNaN(durationInHours) || durationInHours < 0) {
   return res.status(400).json({
-    message: 'Invalid duration. Duration must be a positive number representing hours.',
+    message: 'Invalid duration. Duration cannot be negative.',
     error: 'Duration validation failed'
   });
 }
-// Convert hours to milliseconds
+// Additional check to ensure at least some minimum duration (optional)
+const minimumDurationMinutes = 5; // 5 minutes minimum
+const durationInMinutes = durationInHours * 60;
+
+if (durationInMinutes < minimumDurationMinutes && durationInMinutes > 0) {
+  return res.status(400).json({
+    message: `Tournament duration must be at least ${minimumDurationMinutes} minutes.`,
+    error: 'Duration too short'
+  });
+}
+
+// Convert hours to milliseconds (rest of your code remains the same)
 const durationInMs = durationInHours * 60 * 60 * 1000;
 
 console.log(`Duration: ${durationInHours} hours → ${durationInMs}ms`);
