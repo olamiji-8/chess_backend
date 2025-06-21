@@ -73,31 +73,32 @@ exports.createTournament = asyncHandler(async (req, res) => {
       });
     }
 
-    // Parse and validate duration
-    const durationInHours = parseFloat(duration);
-    console.log('Duration received:', duration, 'Parsed:', durationInHours);
+// Parse and validate duration
+const durationInHours = parseFloat(duration);
+console.log('Duration received:', duration, 'Parsed:', durationInHours);
 
-    if (isNaN(durationInHours) || durationInHours <= 0) {
-      return res.status(400).json({
-        message: 'Invalid duration. Duration must be a positive number.',
-        receivedDuration: duration,
-        parsedDuration: durationInHours
-      });
-    }
+// Check if duration is a valid number
+if (isNaN(durationInHours)) {
+  return res.status(400).json({
+    message: 'Invalid duration. Duration must be a valid number.',
+    receivedDuration: duration,
+    parsedDuration: durationInHours
+  });
+}
 
-    // Set minimum duration (5 minutes = 5/60 hours = 0.083 hours)
-    const minimumDurationHours = 5 / 60; // 5 minutes in hours
-    if (durationInHours < minimumDurationHours) {
-      return res.status(400).json({
-        message: `Tournament duration must be at least 5 minutes.`,
-        receivedDuration: `${durationInHours} hours`,
-        minimumRequired: `${minimumDurationHours} hours (5 minutes)`
-      });
-    }
+// Set minimum duration (5 minutes = 5/60 hours = 0.083 hours)
+const minimumDurationHours = 5 / 60; // 5 minutes in hours
+if (durationInHours < minimumDurationHours) {
+  return res.status(400).json({
+    message: `Tournament duration must be at least 5 minutes.`,
+    receivedDuration: `${durationInHours} hours`,
+    minimumRequired: `${minimumDurationHours} hours (5 minutes)`
+  });
+}
 
-    // Convert hours to milliseconds for storage
-    const durationInMs = durationInHours * 60 * 60 * 1000;
-    console.log(`Duration: ${durationInHours} hours → ${durationInMs}ms`);
+// Convert hours to milliseconds for storage
+const durationInMs = durationInHours * 60 * 60 * 1000;
+console.log(`Duration: ${durationInHours} hours → ${durationInMs}ms`);
 
     // Upload banner image to cloudinary
     let bannerUrl = '';
