@@ -355,67 +355,82 @@ console.log(`Duration: ${durationInHours} hours → ${durationInMs}ms`);
   }
 });
 
-exports.getTournaments = asyncHandler(async (req, res) => {
-  const page = parseInt(req.query.page, 10) || 1;
-  const limit = parseInt(req.query.limit, 10) || 10;
-  const startIndex = (page - 1) * limit;
-  const category = req.query.category;
-  const status = req.query.status || 'upcoming';
-  
-  console.log('Fetching tournaments with params:', { 
-    page, 
-    limit, 
-    category, 
-    status 
-  });
-  
-  let query = {};
-  
-  // Filter by category if provided
-  if (category && category !== 'all') {
-    query.category = category;
-  }
-  
-  // First, update all tournament statuses
-  await updateAllTournamentStatuses();
-  
-  // Now apply status filter after updates
-  if (status && status !== 'all') {
-    query.status = status;
-  }
+// ==================== HELPER FUNCTIONS ====================
 
-  const total = await Tournament.countDocuments(query);
+// Helper function to generate registration link for a tournament
+const generateRegistrationLink = (tournamentId) => {
+  const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  return `${baseUrl}/tournaments/${tournamentId}/register`;
+};
+
+// Helper function to add registration info to tournament object
+const addRegistrationInfo = (tournament) => {
+  const tournamentObj = tournament.toObject();
   
-  const tournaments = await Tournament.find(query)
-    .populate('organizer', 'fullName email')
-    .populate({
-      path: 'participants',
-      select: 'fullName profilePic',
-      options: { limit: 5 }
-    })
-    .skip(startIndex)
-    .limit(limit)
-    .sort({ startDate: 1 });
+  // Add calculated fields - using tournamentObj instead of tournament
+  tournamentObj.durationInHours = tournament.duration / 3600000;
+  tournamentObj.startDateTime = tournament.getStartDateTime();
+  tournamentObj.endDateTime = tournament.getEndDateTime();
+  tournamentObj.currentStatus = tournament.currentStatus;
   
-  // Convert duration and add calculated fields
-  const formattedTournaments = tournaments.map(tournament => {
-    const tournamentObj = tournament.toObject();
-    tournamentObj.durationInHours = tournament.duration / 3600000;
-    tournamentObj.startDateTime = tournament.getStartDateTime();
-    tournamentObj.endDateTime = tournament.getEndDateTime();
-    tournamentObj.currentStatus = tournament.currentStatus;
-    return tournamentObj;
+  // Add registration link
+  tournamentObj.registrationLink = generateRegistrationLink(tournament._id);
+  
+  // Add registration status information
+  tournamentObj.registrationInfo = {
+    isRegistrationOpen: tournament.status === 'upcoming',
+    currentParticipants: tournament.participants.length,
+    maxParticipants: tournament.maxParticipants || null,
+    entryFee: tournament.entryFee,
+    requiresLichessAccount: true
+  };
+  
+  return tournamentObj;
+};
+
+// @desc    Get single tournament
+// @route   GET /api/tournaments/:id
+// @access  Public
+exports.getTournament = asyncHandler(async (req, res) => {
+  const tournament = await Tournament.findById(req.params.id)
+    .populate('organizer', 'fullName email phoneNumber')
+    .populate('participants', 'fullName profilePic lichessUsername');
+  
+  if (!tournament) {
+    return res.status(404).json({ message: 'Tournament not found' });
+  }
+  
+  // Update tournament status if needed
+  tournament.updateStatusBasedOnTime();
+  
+  // Add registration info and links
+  const tournamentData = addRegistrationInfo(tournament);
+  
+  res.status(200).json({
+    success: true,
+    data: tournamentData
+  });
+});
+
+// @desc    Get all tournaments
+// @route   GET /api/tournaments
+// @access  Public
+exports.getTournaments = asyncHandler(async (req, res) => {
+  const tournaments = await Tournament.find()
+    .populate('organizer', 'fullName email phoneNumber')
+    .populate('participants', 'fullName profilePic lichessUsername')
+    .sort({ createdAt: -1 });
+  
+  // Update status and add registration info for each tournament
+  const tournamentsWithInfo = tournaments.map(tournament => {
+    tournament.updateStatusBasedOnTime();
+    return addRegistrationInfo(tournament);
   });
   
   res.status(200).json({
     success: true,
-    count: formattedTournaments.length,
-    total,
-    pagination: {
-      current: page,
-      totalPages: Math.ceil(total / limit)
-    },
-    data: formattedTournaments
+    count: tournaments.length,
+    data: tournamentsWithInfo
   });
 });
 
@@ -445,27 +460,27 @@ async function updateAllTournamentStatuses() {
 }
 
 
-// @desc    Get single tournament
-// @route   GET /api/tournaments/:id
-// @access  Public
-exports.getTournament = asyncHandler(async (req, res) => {
-  const tournament = await Tournament.findById(req.params.id)
-    .populate('organizer', 'fullName email phoneNumber')
-    .populate('participants', 'fullName profilePic lichessUsername');
+// // @desc    Get single tournament
+// // @route   GET /api/tournaments/:id
+// // @access  Public
+// exports.getTournament = asyncHandler(async (req, res) => {
+//   const tournament = await Tournament.findById(req.params.id)
+//     .populate('organizer', 'fullName email phoneNumber')
+//     .populate('participants', 'fullName profilePic lichessUsername');
   
-  if (!tournament) {
-    return res.status(404).json({ message: 'Tournament not found' });
-  }
+//   if (!tournament) {
+//     return res.status(404).json({ message: 'Tournament not found' });
+//   }
   
-  // Convert duration from milliseconds to hours for client display
-  const tournamentObj = tournament.toObject();
-  tournamentObj.durationInHours = tournament.duration / 3600000;
+//   // Convert duration from milliseconds to hours for client display
+//   const tournamentObj = tournament.toObject();
+//   tournamentObj.durationInHours = tournament.duration / 3600000;
   
-  res.status(200).json({
-    success: true,
-    data: tournamentObj
-  });
-});
+//   res.status(200).json({
+//     success: true,
+//     data: tournamentObj
+//   });
+// });
 
 // @desc    Register for a tournament
 // @route   POST /api/tournaments/:id/register
