@@ -392,24 +392,48 @@ const addRegistrationInfo = (tournament) => {
 // @route   GET /api/tournaments/:id
 // @access  Public
 exports.getTournament = asyncHandler(async (req, res) => {
-  const tournament = await Tournament.findById(req.params.id)
-    .populate('organizer', 'fullName email phoneNumber')
-    .populate('participants', 'fullName profilePic lichessUsername');
-  
-  if (!tournament) {
-    return res.status(404).json({ message: 'Tournament not found' });
+  try {
+    console.log('Tournament ID:', req.params.id); // Debug log
+    
+    // Validate MongoDB ObjectId format
+    if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Invalid tournament ID format' 
+      });
+    }
+    
+    const tournament = await Tournament.findById(req.params.id)
+      .populate('organizer', 'fullName email phoneNumber')
+      .populate('participants', 'fullName profilePic lichessUsername');
+    
+    if (!tournament) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Tournament not found' 
+      });
+    }
+    
+    // Update tournament status if needed (check if method exists)
+    if (typeof tournament.updateStatusBasedOnTime === 'function') {
+      tournament.updateStatusBasedOnTime();
+    }
+    
+    // Add registration info and links
+    const tournamentData = addRegistrationInfo(tournament);
+    
+    res.status(200).json({
+      success: true,
+      data: tournamentData
+    });
+  } catch (error) {
+    console.error('Error fetching tournament:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching tournament',
+      error: error.message
+    });
   }
-  
-  // Update tournament status if needed
-  tournament.updateStatusBasedOnTime();
-  
-  // Add registration info and links
-  const tournamentData = addRegistrationInfo(tournament);
-  
-  res.status(200).json({
-    success: true,
-    data: tournamentData
-  });
 });
 
 // @desc    Get all tournaments
