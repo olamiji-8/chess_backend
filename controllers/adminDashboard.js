@@ -3927,7 +3927,7 @@ exports.createActivityLog = async (req, res) => {
   exports.getAllWithdrawals = async (req, res) => {
     try {
       const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 10;
+      const limit = parseInt(req.query.limit) || 25;
       const skip = (page - 1) * limit;
       const status = req.query.status; // 'pending', 'completed', 'declined', or undefined for all
       const search = req.query.search || '';
