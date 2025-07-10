@@ -1337,41 +1337,6 @@ function calculateTotalPrizePool(prizes, prizeType) {
         });
       }
   
-      // Check if tournament has participants
-      if (tournament.participants && tournament.participants.length > 0) {
-        // If there are participants, we need to refund their entry fees
-        // Create refund transactions for each participant
-        for (const participantId of tournament.participants) {
-          const user = await User.findById(participantId);
-          
-          if (user) {
-            // Create refund transaction
-            await Transaction.create({
-              user: participantId,
-              tournament: tournamentId,
-              type: 'refund',
-              amount: tournament.entryFee,
-              reference: `REFUND-${Date.now()}-${participantId.toString().substring(0, 6)}`,
-              paymentMethod: 'wallet',
-              status: 'completed',
-              details: {
-                reason: 'Tournament deleted by admin',
-                tournamentTitle: tournament.title
-              }
-            });
-            
-            // Update user wallet balance
-            user.walletBalance += tournament.entryFee;
-            await user.save();
-            
-            // Remove tournament from user's registered tournaments
-            await User.findByIdAndUpdate(participantId, {
-              $pull: { registeredTournaments: tournamentId }
-            });
-          }
-        }
-      }
-  
       // Remove tournament from organizer's created tournaments
       await User.findByIdAndUpdate(tournament.organizer, {
         $pull: { createdTournaments: tournamentId }
@@ -1452,6 +1417,11 @@ function calculateTotalPrizePool(prizes, prizeType) {
             // Update user wallet balance
             user.walletBalance += tournament.entryFee;
             await user.save();
+            
+            // Remove tournament from user's registered tournaments
+            await User.findByIdAndUpdate(participantId, {
+              $pull: { registeredTournaments: tournamentId }
+            });
           }
         }
       }
