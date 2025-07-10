@@ -440,7 +440,9 @@ exports.getTournament = asyncHandler(async (req, res) => {
 // @route   GET /api/tournaments
 // @access  Public
 exports.getTournaments = asyncHandler(async (req, res) => {
-  const tournaments = await Tournament.find()
+  const tournaments = await Tournament.find({
+    status: { $ne: 'completed' } // Exclude completed tournaments
+  })
     .populate('organizer', 'fullName email phoneNumber')
     .populate('participants', 'fullName profilePic lichessUsername')
     .sort({ createdAt: -1 });
