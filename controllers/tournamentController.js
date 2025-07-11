@@ -27,6 +27,7 @@ exports.createTournament = asyncHandler(async (req, res) => {
       rules,
       startDate,
       startTime,
+      timezone,
       duration,
       prizeType,
       prizes,
@@ -72,6 +73,12 @@ exports.createTournament = asyncHandler(async (req, res) => {
         message: 'Invalid time format. Expected HH:MM in 24-hour format' 
       });
     }
+
+    // Get user's timezone from request body or default to UTC
+    const userTimezone = timezone || 'UTC';
+    console.log('User timezone:', userTimezone);
+    console.log('Start time received:', startTime);
+    console.log('Start date received:', startDate);
 
 // Parse and validate duration
 const durationInHours = parseFloat(duration);
@@ -292,6 +299,7 @@ console.log(`Duration: ${durationInHours} hours → ${durationInMs}ms`);
         rules,
         startDate: new Date(startDate),
         startTime,
+        timezone: userTimezone,
         duration: durationInMs, // Store in milliseconds
         prizeType,
         prizes: normalizedPrizes,
@@ -945,9 +953,9 @@ cron.schedule('*/5 * * * *', async () => {
     });
     
     for (const tournament of tournamentsToStart) {
-      const tournamentStart = new Date(`${tournament.startDate.toISOString().split('T')[0]}T${tournament.startTime}`);
+      const tournamentStart = tournament.getStartDateTime();
       
-      if (now >= tournamentStart) {
+      if (tournamentStart && now >= tournamentStart) {
         await Tournament.findByIdAndUpdate(tournament._id, {
           $set: { status: 'active' }
         });
@@ -955,20 +963,20 @@ cron.schedule('*/5 * * * *', async () => {
       }
     }
     
-    // Update tournaments from 'active' to 'ended' when they finish
+    // Update tournaments from 'active' to 'completed' when they finish
     const activeTournaments = await Tournament.find({
       status: 'active'
     });
     
     for (const tournament of activeTournaments) {
-      const tournamentStart = new Date(`${tournament.startDate.toISOString().split('T')[0]}T${tournament.startTime}`);
-      const tournamentEnd = new Date(tournamentStart.getTime() + tournament.duration);
+      const tournamentStart = tournament.getStartDateTime();
+      const tournamentEnd = tournament.getEndDateTime();
       
-      if (now >= tournamentEnd) {
+      if (tournamentStart && tournamentEnd && now >= tournamentEnd) {
         await Tournament.findByIdAndUpdate(tournament._id, {
-          $set: { status: 'ended' }
+          $set: { status: 'completed' }
         });
-        console.log(`Tournament ${tournament.title} status updated to ended`);
+        console.log(`Tournament ${tournament.title} status updated to completed`);
       }
     }
   } catch (error) {

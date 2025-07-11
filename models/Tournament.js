@@ -33,6 +33,11 @@ const TournamentSchema = new mongoose.Schema({
       message: 'Start time must be in HH:MM format'
     }
   },
+  timezone: {
+    type: String,
+    default: 'UTC',
+    required: [true, 'Timezone is required']
+  },
   duration: {
     type: Number, // In milliseconds
     required: [true, 'Tournament duration is required']
@@ -181,8 +186,28 @@ TournamentSchema.methods.getStartDateTime = function() {
       return null;
     }
     
-    startDate.setHours(hours, minutes, 0, 0);
-    return startDate;
+    // Create a date string in the tournament's timezone
+    const dateString = `${startDate.toISOString().split('T')[0]}T${this.startTime}:00`;
+    
+    // If timezone is specified and not UTC, we need to handle timezone conversion
+    if (this.timezone && this.timezone !== 'UTC') {
+      try {
+        // For now, we'll assume the time is in the user's local timezone
+        // and convert it to UTC for storage and comparison
+        const localDateTime = new Date(dateString);
+        console.log(`Tournament ${this._id} - Local time: ${localDateTime.toISOString()}, Timezone: ${this.timezone}`);
+        return localDateTime;
+      } catch (timezoneError) {
+        console.error(`Error handling timezone ${this.timezone} for tournament ${this._id}:`, timezoneError);
+        // Fallback to simple date creation
+        startDate.setHours(hours, minutes, 0, 0);
+        return startDate;
+      }
+    } else {
+      // UTC timezone - use simple date creation
+      startDate.setHours(hours, minutes, 0, 0);
+      return startDate;
+    }
   } catch (error) {
     console.error(`Error calculating start date/time for tournament ${this._id}:`, error);
     return null;
