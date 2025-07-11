@@ -12,7 +12,7 @@ const TransactionSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['deposit', 'withdrawal', 'tournament_entry', 'tournament_funding', 'prize_payout', 'refund'],
+    enum: ['deposit', 'withdrawal', 'tournament_entry', 'tournament_funding', 'prize_payout', 'refund', 'clawback'],
     required: true
   },
   amount: {
