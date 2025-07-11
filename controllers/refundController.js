@@ -4,159 +4,113 @@ const User = require('../models/User');
 const Tournament = require('../models/Tournament');
 
 /**
- * Refund Controller for handling transaction refunds
+ * Clawback Controller for recovering funds due to system glitches
  */
-class RefundController {
+class ClawbackController {
   
   /**
-   * Create a refund transaction for a user
+   * Create a clawback transaction to recover funds from a user
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    */
-  static async createRefund(req, res) {
+  static async createClawback(req, res) {
     const session = await mongoose.startSession();
     session.startTransaction();
     
     try {
       const { 
-        originalTransactionId, 
-        refundAmount, 
-        reason, 
-        refundToWallet = true 
+        userId, 
+        clawbackAmount, 
+        reason,
+        originalTransactionId = null // Optional reference to the glitched transaction
       } = req.body;
       
       // Validate required fields
-      if (!originalTransactionId || !refundAmount) {
+      if (!userId || !clawbackAmount) {
         return res.status(400).json({
           success: false,
-          message: 'Original transaction ID and refund amount are required'
+          message: 'User ID and clawback amount are required'
         });
       }
       
-      // Find the original transaction
-      const originalTransaction = await Transaction.findById(originalTransactionId)
-        .populate('user', 'fullName email walletBalance')
-        .populate('tournament', 'title')
-        .session(session);
+      // Find the user
+      const user = await User.findById(userId).session(session);
       
-      if (!originalTransaction) {
+      if (!user) {
         await session.abortTransaction();
         return res.status(404).json({
           success: false,
-          message: 'Original transaction not found'
+          message: 'User not found'
         });
       }
       
-      // Validate refund amount
-      if (refundAmount > originalTransaction.amount) {
+      // Check if user has sufficient balance
+      if (user.walletBalance < clawbackAmount) {
         await session.abortTransaction();
         return res.status(400).json({
           success: false,
-          message: 'Refund amount cannot be greater than original transaction amount'
+          message: `Insufficient funds. User has ${user.walletBalance}, trying to clawback ${clawbackAmount}`
         });
       }
       
-      // Check if transaction is eligible for refund
-      if (originalTransaction.status === 'refunded') {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: 'Transaction has already been refunded'
-        });
-      }
+      // Generate unique reference for clawback
+      const clawbackReference = `CLAWBACK_${Date.now()}_${userId}`;
       
-      // Generate unique reference for refund
-      const refundReference = `REFUND_${Date.now()}_${originalTransaction.reference}`;
-      
-      // Create refund transaction
-      const refundTransaction = new Transaction({
-        user: originalTransaction.user._id,
-        tournament: originalTransaction.tournament?._id,
-        type: 'refund',
-        amount: refundAmount,
-        reference: refundReference,
-        paymentMethod: originalTransaction.paymentMethod,
-        status: 'pending',
+      // Create clawback transaction
+      const clawbackTransaction = new Transaction({
+        user: userId,
+        type: 'clawback',
+        amount: clawbackAmount,
+        reference: clawbackReference,
+        paymentMethod: 'wallet', // FIXED: Changed from 'wallet_deduction' to 'wallet'
+        status: 'completed',
         details: {
-          originalTransactionId: originalTransaction._id,
-          originalReference: originalTransaction.reference,
-          refundReason: reason || 'Administrative refund',
-          refundToWallet: refundToWallet,
+          originalTransactionId: originalTransactionId,
+          clawbackReason: reason || 'System glitch recovery',
           processedBy: req.user._id,
-          processedAt: new Date()
+          processedAt: new Date(),
+          userBalanceBefore: user.walletBalance,
+          userBalanceAfter: user.walletBalance - clawbackAmount
         },
         metadata: {
-          originalTransactionType: originalTransaction.type,
-          originalAmount: originalTransaction.amount,
-          refundType: 'admin_initiated'
+          clawbackType: 'admin_initiated',
+          recoveryAction: true
         }
       });
       
-      await refundTransaction.save({ session });
+      await clawbackTransaction.save({ session });
       
-      // Update user's wallet balance if refunding to wallet
-      if (refundToWallet) {
-        await User.findByIdAndUpdate(
-          originalTransaction.user._id,
-          { $inc: { walletBalance: refundAmount } },
-          { session }
-        );
-      }
-      
-      // Update original transaction status
-      await Transaction.findByIdAndUpdate(
-        originalTransactionId,
-        { 
-          status: 'refunded',
-          metadata: {
-            ...originalTransaction.metadata,
-            refundedAt: new Date(),
-            refundTransactionId: refundTransaction._id,
-            refundAmount: refundAmount
-          }
-        },
+      // Deduct from user's wallet balance
+      await User.findByIdAndUpdate(
+        userId,
+        { $inc: { walletBalance: -clawbackAmount } }, // Negative increment = deduction
         { session }
       );
-      
-      // If it was a tournament entry, remove user from tournament participants
-      if (originalTransaction.type === 'tournament_entry' && originalTransaction.tournament) {
-        await Tournament.findByIdAndUpdate(
-          originalTransaction.tournament._id,
-          { $pull: { participants: originalTransaction.user._id } },
-          { session }
-        );
-        
-        // Also remove from user's registered tournaments
-        await User.findByIdAndUpdate(
-          originalTransaction.user._id,
-          { $pull: { registeredTournaments: originalTransaction.tournament._id } },
-          { session }
-        );
-      }
-      
-      // Mark refund as completed
-      refundTransaction.status = 'completed';
-      await refundTransaction.save({ session });
       
       await session.commitTransaction();
       
       res.status(200).json({
         success: true,
-        message: 'Refund processed successfully',
+        message: 'Clawback processed successfully',
         data: {
-          refundTransaction: refundTransaction,
-          originalTransaction: originalTransaction,
-          refundedAmount: refundAmount,
-          newWalletBalance: originalTransaction.user.walletBalance + refundAmount
+          clawbackTransaction: clawbackTransaction,
+          user: {
+            id: user._id,
+            fullName: user.fullName,
+            email: user.email,
+            previousBalance: user.walletBalance,
+            newBalance: user.walletBalance - clawbackAmount
+          },
+          recoveredAmount: clawbackAmount
         }
       });
       
     } catch (error) {
       await session.abortTransaction();
-      console.error('Refund processing error:', error);
+      console.error('Clawback processing error:', error);
       res.status(500).json({
         success: false,
-        message: 'Error processing refund',
+        message: 'Error processing clawback',
         error: error.message
       });
     } finally {
@@ -165,72 +119,238 @@ class RefundController {
   }
   
   /**
-   * Get refund history for a user
+   * Bulk clawback processing for multiple users
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    */
-  static async getRefundHistory(req, res) {
+  static async bulkClawback(req, res) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    
     try {
-      const { userId } = req.params;
-      const { page = 1, limit = 10 } = req.query;
+      const { userClawbacks, reason } = req.body;
       
-      const refunds = await Transaction.find({
-        user: userId,
-        type: 'refund'
-      })
-      .populate('user', 'fullName email')
-      .populate('tournament', 'title')
-      .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .lean();
+      // userClawbacks should be an array like: [{ userId: 'xxx', amount: 100 }, ...]
+      if (!userClawbacks || !Array.isArray(userClawbacks) || userClawbacks.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'User clawbacks array is required'
+        });
+      }
       
-      const totalRefunds = await Transaction.countDocuments({
-        user: userId,
-        type: 'refund'
-      });
+      const results = {
+        successful: [],
+        failed: []
+      };
+      
+      for (const clawback of userClawbacks) {
+        try {
+          const { userId, amount } = clawback;
+          
+          const user = await User.findById(userId).session(session);
+          
+          if (!user) {
+            results.failed.push({
+              userId,
+              error: 'User not found'
+            });
+            continue;
+          }
+          
+          if (user.walletBalance < amount) {
+            results.failed.push({
+              userId,
+              error: `Insufficient funds. Has ${user.walletBalance}, trying to clawback ${amount}`
+            });
+            continue;
+          }
+          
+          // Process individual clawback
+          const clawbackReference = `BULK_CLAWBACK_${Date.now()}_${userId}`;
+          
+          const clawbackTransaction = new Transaction({
+            user: userId,
+            type: 'clawback',
+            amount: amount,
+            reference: clawbackReference,
+            paymentMethod: 'wallet', // FIXED: Changed from 'wallet_deduction' to 'wallet'
+            status: 'completed',
+            details: {
+              clawbackReason: reason || 'Bulk system glitch recovery',
+              processedBy: req.user._id,
+              processedAt: new Date(),
+              bulkClawback: true,
+              userBalanceBefore: user.walletBalance,
+              userBalanceAfter: user.walletBalance - amount
+            }
+          });
+          
+          await clawbackTransaction.save({ session });
+          
+          // Update user wallet
+          await User.findByIdAndUpdate(
+            userId,
+            { $inc: { walletBalance: -amount } }, // Negative increment = deduction
+            { session }
+          );
+          
+          results.successful.push({
+            userId,
+            clawbackTransactionId: clawbackTransaction._id,
+            amount: amount,
+            userEmail: user.email,
+            previousBalance: user.walletBalance,
+            newBalance: user.walletBalance - amount
+          });
+          
+        } catch (error) {
+          results.failed.push({
+            userId: clawback.userId,
+            error: error.message
+          });
+        }
+      }
+      
+      await session.commitTransaction();
       
       res.status(200).json({
         success: true,
+        message: 'Bulk clawback processing completed',
         data: {
-          refunds,
-          totalRefunds,
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(totalRefunds / limit)
+          totalProcessed: userClawbacks.length,
+          successful: results.successful.length,
+          failed: results.failed.length,
+          totalRecovered: results.successful.reduce((sum, item) => sum + item.amount, 0),
+          results
         }
       });
       
     } catch (error) {
-      console.error('Error getting refund history:', error);
+      await session.abortTransaction();
+      console.error('Bulk clawback error:', error);
       res.status(500).json({
         success: false,
-        message: 'Error retrieving refund history',
+        message: 'Error processing bulk clawbacks',
         error: error.message
       });
+    } finally {
+      session.endSession();
     }
   }
   
   /**
-   * Get all refunds (Admin only)
+   * Clawback all available funds from a user (emergency recovery)
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    */
-  static async getAllRefunds(req, res) {
+  static async clawbackAllFunds(req, res) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    
+    try {
+      const { userId, reason } = req.body;
+      
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: 'User ID is required'
+        });
+      }
+      
+      const user = await User.findById(userId).session(session);
+      
+      if (!user) {
+        await session.abortTransaction();
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+      
+      if (user.walletBalance <= 0) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: 'User has no funds to clawback'
+        });
+      }
+      
+      const clawbackAmount = user.walletBalance;
+      const clawbackReference = `FULL_CLAWBACK_${Date.now()}_${userId}`;
+      
+      const clawbackTransaction = new Transaction({
+        user: userId,
+        type: 'clawback',
+        amount: clawbackAmount,
+        reference: clawbackReference,
+        paymentMethod: 'wallet', // FIXED: Changed from 'wallet_deduction' to 'wallet'
+        status: 'completed',
+        details: {
+          clawbackReason: reason || 'Emergency fund recovery - all available funds',
+          processedBy: req.user._id,
+          processedAt: new Date(),
+          fullClawback: true,
+          userBalanceBefore: user.walletBalance,
+          userBalanceAfter: 0
+        }
+      });
+      
+      await clawbackTransaction.save({ session });
+      
+      // Set user wallet balance to 0
+      await User.findByIdAndUpdate(
+        userId,
+        { walletBalance: 0 },
+        { session }
+      );
+      
+      await session.commitTransaction();
+      
+      res.status(200).json({
+        success: true,
+        message: 'Full clawback processed successfully',
+        data: {
+          clawbackTransaction: clawbackTransaction,
+          user: {
+            id: user._id,
+            fullName: user.fullName,
+            email: user.email,
+            previousBalance: user.walletBalance,
+            newBalance: 0
+          },
+          recoveredAmount: clawbackAmount
+        }
+      });
+      
+    } catch (error) {
+      await session.abortTransaction();
+      console.error('Full clawback processing error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error processing full clawback',
+        error: error.message
+      });
+    } finally {
+      session.endSession();
+    }
+  }
+  
+  /**
+   * Get all clawback transactions (Admin only)
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   */
+  static async getAllClawbacks(req, res) {
     try {
       const { 
         page = 1, 
         limit = 10, 
-        status, 
         dateFrom, 
         dateTo 
       } = req.query;
       
       // Build query filter
-      const filter = { type: 'refund' };
-      
-      if (status) {
-        filter.status = status;
-      }
+      const filter = { type: 'clawback' };
       
       if (dateFrom || dateTo) {
         filter.createdAt = {};
@@ -242,24 +362,23 @@ class RefundController {
         }
       }
       
-      const refunds = await Transaction.find(filter)
+      const clawbacks = await Transaction.find(filter)
         .populate('user', 'fullName email lichessUsername')
-        .populate('tournament', 'title')
         .sort({ createdAt: -1 })
         .limit(limit * 1)
         .skip((page - 1) * limit)
         .lean();
       
-      const totalRefunds = await Transaction.countDocuments(filter);
+      const totalClawbacks = await Transaction.countDocuments(filter);
       
-      // Calculate refund statistics
-      const refundStats = await Transaction.aggregate([
-        { $match: { type: 'refund' } },
+      // Calculate clawback statistics
+      const clawbackStats = await Transaction.aggregate([
+        { $match: { type: 'clawback' } },
         {
           $group: {
-            _id: '$status',
-            count: { $sum: 1 },
-            totalAmount: { $sum: '$amount' }
+            _id: null,
+            totalAmount: { $sum: '$amount' },
+            count: { $sum: 1 }
           }
         }
       ]);
@@ -267,202 +386,23 @@ class RefundController {
       res.status(200).json({
         success: true,
         data: {
-          refunds,
-          totalRefunds,
+          clawbacks,
+          totalClawbacks,
           currentPage: parseInt(page),
-          totalPages: Math.ceil(totalRefunds / limit),
-          statistics: refundStats
+          totalPages: Math.ceil(totalClawbacks / limit),
+          statistics: clawbackStats[0] || { totalAmount: 0, count: 0 }
         }
       });
       
     } catch (error) {
-      console.error('Error getting all refunds:', error);
+      console.error('Error getting all clawbacks:', error);
       res.status(500).json({
         success: false,
-        message: 'Error retrieving refunds',
-        error: error.message
-      });
-    }
-  }
-  
-  /**
-   * Bulk refund processing for multiple transactions
-   * @param {Object} req - Express request object
-   * @param {Object} res - Express response object
-   */
-  static async bulkRefund(req, res) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-    
-    try {
-      const { transactionIds, reason } = req.body;
-      
-      if (!transactionIds || !Array.isArray(transactionIds) || transactionIds.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'Transaction IDs array is required'
-        });
-      }
-      
-      const results = {
-        successful: [],
-        failed: []
-      };
-      
-      for (const transactionId of transactionIds) {
-        try {
-          const transaction = await Transaction.findById(transactionId)
-            .populate('user')
-            .session(session);
-          
-          if (!transaction) {
-            results.failed.push({
-              transactionId,
-              error: 'Transaction not found'
-            });
-            continue;
-          }
-          
-          if (transaction.status === 'refunded') {
-            results.failed.push({
-              transactionId,
-              error: 'Already refunded'
-            });
-            continue;
-          }
-          
-          // Process individual refund
-          const refundReference = `BULK_REFUND_${Date.now()}_${transaction.reference}`;
-          
-          const refundTransaction = new Transaction({
-            user: transaction.user._id,
-            tournament: transaction.tournament,
-            type: 'refund',
-            amount: transaction.amount,
-            reference: refundReference,
-            paymentMethod: transaction.paymentMethod,
-            status: 'completed',
-            details: {
-              originalTransactionId: transaction._id,
-              originalReference: transaction.reference,
-              refundReason: reason || 'Bulk administrative refund',
-              refundToWallet: true,
-              processedBy: req.user._id,
-              processedAt: new Date(),
-              bulkRefund: true
-            }
-          });
-          
-          await refundTransaction.save({ session });
-          
-          // Update user wallet
-          await User.findByIdAndUpdate(
-            transaction.user._id,
-            { $inc: { walletBalance: transaction.amount } },
-            { session }
-          );
-          
-          // Update original transaction
-          await Transaction.findByIdAndUpdate(
-            transactionId,
-            { 
-              status: 'refunded',
-              metadata: {
-                ...transaction.metadata,
-                refundedAt: new Date(),
-                refundTransactionId: refundTransaction._id,
-                refundAmount: transaction.amount
-              }
-            },
-            { session }
-          );
-          
-          results.successful.push({
-            transactionId,
-            refundTransactionId: refundTransaction._id,
-            amount: transaction.amount
-          });
-          
-        } catch (error) {
-          results.failed.push({
-            transactionId,
-            error: error.message
-          });
-        }
-      }
-      
-      await session.commitTransaction();
-      
-      res.status(200).json({
-        success: true,
-        message: 'Bulk refund processing completed',
-        data: {
-          totalProcessed: transactionIds.length,
-          successful: results.successful.length,
-          failed: results.failed.length,
-          results
-        }
-      });
-      
-    } catch (error) {
-      await session.abortTransaction();
-      console.error('Bulk refund error:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Error processing bulk refunds',
-        error: error.message
-      });
-    } finally {
-      session.endSession();
-    }
-  }
-  
-  /**
-   * Get refund details by ID
-   * @param {Object} req - Express request object
-   * @param {Object} res - Express response object
-   */
-  static async getRefundDetails(req, res) {
-    try {
-      const { refundId } = req.params;
-      
-      const refund = await Transaction.findById(refundId)
-        .populate('user', 'fullName email lichessUsername walletBalance')
-        .populate('tournament', 'title')
-        .lean();
-      
-      if (!refund || refund.type !== 'refund') {
-        return res.status(404).json({
-          success: false,
-          message: 'Refund transaction not found'
-        });
-      }
-      
-      // Get original transaction if available
-      let originalTransaction = null;
-      if (refund.details.originalTransactionId) {
-        originalTransaction = await Transaction.findById(refund.details.originalTransactionId)
-          .populate('tournament', 'title')
-          .lean();
-      }
-      
-      res.status(200).json({
-        success: true,
-        data: {
-          refund,
-          originalTransaction
-        }
-      });
-      
-    } catch (error) {
-      console.error('Error getting refund details:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Error retrieving refund details',
+        message: 'Error retrieving clawbacks',
         error: error.message
       });
     }
   }
 }
 
-module.exports = RefundController;
+module.exports = ClawbackController;

@@ -125,6 +125,7 @@ app.use('/api/puzzles', puzzleRoute);
 app.use('/api/games', gameRoutes);
 // app.use('/api/admin/puzzles', adminPuzzleRoutes);
 app.use('/api/notifications', notification);
+app.use('/api/refunds', refundRoutes);
 
 // JWT Authentication debug endpoint
 app.get('/api/auth-status', (req, res) => {
