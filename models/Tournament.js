@@ -19,6 +19,13 @@ const TournamentSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Tournament rules are required']
   },
+  timezone: {
+  type: String,
+  default: 'UTC'
+},
+originalStartDateTime: {
+  type: String // Store original input for reference
+},
   startDate: {
     type: Date,
     required: [true, 'Start date is required']
