@@ -7,6 +7,13 @@
   const { v4: uuidv4 } = require('uuid');
   const fs = require('fs');
   const cron = require('node-cron');
+  const dayjs = require('dayjs');
+  const utc = require('dayjs/plugin/utc');
+  const timezone = require('dayjs/plugin/timezone');
+
+  // Extend dayjs with timezone plugins
+  dayjs.extend(utc);
+  dayjs.extend(timezone);
   const {
   notifyTournamentRegistration,
   notifyTournamentStartingInFiveMinutes,
@@ -79,6 +86,14 @@ exports.createTournament = asyncHandler(async (req, res) => {
     console.log('User timezone:', userTimezone);
     console.log('Start time received:', startTime);
     console.log('Start date received:', startDate);
+    
+    // Log timezone conversion for debugging
+    if (userTimezone !== 'UTC') {
+      const dateString = new Date(startDate).toISOString().split('T')[0];
+      const localDateTime = dayjs.tz(`${dateString} ${startTime}`, userTimezone);
+      const utcDateTime = localDateTime.utc();
+      console.log(`Timezone conversion: ${localDateTime.format()} (${userTimezone}) → ${utcDateTime.format()} (UTC)`);
+    }
 
 // Parse and validate duration
 const durationInHours = parseFloat(duration);
