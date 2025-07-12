@@ -1,4 +1,11 @@
 const mongoose = require('mongoose');
+const dayjs = require('dayjs');
+const utc = require('dayjs/plugin/utc');
+const timezone = require('dayjs/plugin/timezone');
+
+// Extend dayjs with timezone plugins
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 const TournamentSchema = new mongoose.Schema({
   title: {
@@ -32,6 +39,11 @@ const TournamentSchema = new mongoose.Schema({
       },
       message: 'Start time must be in HH:MM format'
     }
+  },
+  timezone: {
+    type: String,
+    default: 'UTC',
+    required: [true, 'Timezone is required']
   },
   duration: {
     type: Number, // In milliseconds
@@ -181,8 +193,30 @@ TournamentSchema.methods.getStartDateTime = function() {
       return null;
     }
     
-    startDate.setHours(hours, minutes, 0, 0);
-    return startDate;
+    // Create date string in YYYY-MM-DD format
+    const dateString = startDate.toISOString().split('T')[0];
+    
+    // Use Day.js for proper timezone handling
+    if (this.timezone && this.timezone !== 'UTC') {
+      try {
+        // Create datetime in user's timezone, then convert to UTC
+        const localDateTime = dayjs.tz(`${dateString} ${this.startTime}`, this.timezone);
+        const utcDateTime = localDateTime.utc();
+        
+        console.log(`Tournament ${this._id} - Local time: ${localDateTime.format()}, Timezone: ${this.timezone}, UTC: ${utcDateTime.format()}`);
+        
+        return utcDateTime.toDate();
+      } catch (timezoneError) {
+        console.error(`Error handling timezone ${this.timezone} for tournament ${this._id}:`, timezoneError);
+        // Fallback to simple date creation
+        startDate.setHours(hours, minutes, 0, 0);
+        return startDate;
+      }
+    } else {
+      // UTC timezone - use simple date creation
+      startDate.setHours(hours, minutes, 0, 0);
+      return startDate;
+    }
   } catch (error) {
     console.error(`Error calculating start date/time for tournament ${this._id}:`, error);
     return null;
@@ -203,7 +237,11 @@ TournamentSchema.methods.getEndDateTime = function() {
       return null;
     }
 
-    return new Date(startDateTime.getTime() + this.duration);
+    // Use Day.js for consistent timezone handling
+    const startDayjs = dayjs(startDateTime);
+    const endDayjs = startDayjs.add(this.duration, 'millisecond');
+    
+    return endDayjs.toDate();
   } catch (error) {
     console.error(`Error calculating end date/time for tournament ${this._id}:`, error);
     return null;
