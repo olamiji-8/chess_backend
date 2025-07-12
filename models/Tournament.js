@@ -37,9 +37,10 @@ const TournamentSchema = new mongoose.Schema({
     required: [true, 'Start time is required'],
     validate: {
       validator: function(v) {
-        return /^\d{1,2}:\d{2}$/.test(v);
+        // Accept both 12-hour and 24-hour formats
+        return /^\d{1,2}:\d{2}(\s?(AM|PM))?$/i.test(v);
       },
-      message: 'Start time must be in HH:MM format'
+      message: 'Start time must be in HH:MM or HH:MM AM/PM format'
     }
   },
   timezone: {
@@ -137,6 +138,155 @@ const TournamentSchema = new mongoose.Schema({
   }
 });
 
+// Helper method to normalize time format (convert 12-hour to 24-hour)
+TournamentSchema.methods.normalizeTimeFormat = function(timeString) {
+  try {
+    if (!timeString || typeof timeString !== 'string') {
+      throw new Error('Invalid time string');
+    }
+
+    const timeStr = timeString.trim().toUpperCase();
+    
+    // Check if it's 12-hour format (contains AM/PM)
+    if (timeStr.includes('AM') || timeStr.includes('PM')) {
+      const isPM = timeStr.includes('PM');
+      const timeOnly = timeStr.replace(/\s?(AM|PM)/i, '');
+      const [hours, minutes] = timeOnly.split(':').map(Number);
+      
+      if (isNaN(hours) || isNaN(minutes)) {
+        throw new Error('Invalid time format');
+      }
+      
+      let hour24 = hours;
+      
+      // Convert 12-hour to 24-hour
+      if (isPM && hours !== 12) {
+        hour24 = hours + 12;
+      } else if (!isPM && hours === 12) {
+        hour24 = 0;
+      }
+      
+      return `${hour24.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+    } else {
+      // Already in 24-hour format, just validate
+      const [hours, minutes] = timeString.split(':').map(Number);
+      
+      if (isNaN(hours) || isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+        throw new Error('Invalid time values');
+      }
+      
+      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+    }
+  } catch (error) {
+    console.error(`Error normalizing time format for "${timeString}":`, error);
+    return null;
+  }
+};
+
+// Improved method to get start date/time with better error handling
+TournamentSchema.methods.getStartDateTime = function() {
+  try {
+    // Validate inputs
+    if (!this.startDate) {
+      console.error(`Tournament ${this._id} has no startDate`);
+      return null;
+    }
+
+    if (!this.startTime) {
+      console.error(`Tournament ${this._id} has no startTime`);
+      return null;
+    }
+
+    // Normalize time format (handle both 12-hour and 24-hour)
+    const normalizedTime = this.normalizeTimeFormat(this.startTime);
+    if (!normalizedTime) {
+      console.error(`Tournament ${this._id} has invalid startTime format:`, this.startTime);
+      return null;
+    }
+
+    // Get clean date string
+    const startDate = new Date(this.startDate);
+    if (isNaN(startDate.getTime())) {
+      console.error(`Tournament ${this._id} has invalid startDate:`, this.startDate);
+      return null;
+    }
+
+    // Create date string in YYYY-MM-DD format
+    const year = startDate.getFullYear();
+    const month = String(startDate.getMonth() + 1).padStart(2, '0');
+    const day = String(startDate.getDate()).padStart(2, '0');
+    const dateString = `${year}-${month}-${day}`;
+    
+    console.log(`Tournament ${this._id} - Processing:`);
+    console.log(`  Date: ${dateString}`);
+    console.log(`  Original Time: ${this.startTime}`);
+    console.log(`  Normalized Time: ${normalizedTime}`);
+    console.log(`  Timezone: ${this.timezone}`);
+    
+    // Handle timezone conversion
+    const timezone = this.timezone || 'UTC';
+    
+    try {
+      // Create datetime string
+      const datetimeString = `${dateString} ${normalizedTime}`;
+      console.log(`  DateTime String: ${datetimeString}`);
+      
+      let tournamentDateTime;
+      
+      if (timezone === 'UTC') {
+        // Direct UTC parsing
+        tournamentDateTime = dayjs.utc(`${dateString}T${normalizedTime}:00`);
+      } else {
+        // Parse in specified timezone, then convert to UTC
+        tournamentDateTime = dayjs.tz(datetimeString, timezone).utc();
+      }
+      
+      if (!tournamentDateTime.isValid()) {
+        console.error(`Invalid datetime created for tournament ${this._id}`);
+        return null;
+      }
+      
+      console.log(`  Final UTC DateTime: ${tournamentDateTime.format('YYYY-MM-DD HH:mm:ss')} UTC`);
+      console.log(`  ISO String: ${tournamentDateTime.toISOString()}`);
+      
+      return tournamentDateTime.toDate();
+      
+    } catch (timezoneError) {
+      console.error(`Timezone error for tournament ${this._id}:`, timezoneError);
+      // Fallback to UTC
+      const fallbackDateTime = dayjs.utc(`${dateString}T${normalizedTime}:00`);
+      console.log(`  Fallback UTC DateTime: ${fallbackDateTime.toISOString()}`);
+      return fallbackDateTime.toDate();
+    }
+    
+  } catch (error) {
+    console.error(`Error calculating start date/time for tournament ${this._id}:`, error);
+    return null;
+  }
+};
+
+// Helper method to calculate end time
+TournamentSchema.methods.getEndDateTime = function() {
+  try {
+    const startDateTime = this.getStartDateTime();
+    
+    if (!startDateTime) {
+      return null;
+    }
+
+    if (!this.duration || typeof this.duration !== 'number' || this.duration <= 0) {
+      console.error(`Tournament ${this._id} has invalid duration:`, this.duration);
+      return null;
+    }
+
+    const endDateTime = dayjs(startDateTime).add(this.duration, 'millisecond');
+    return endDateTime.toDate();
+  } catch (error) {
+    console.error(`Error calculating end date/time for tournament ${this._id}:`, error);
+    return null;
+  }
+};
+
 // Virtual field to calculate real-time status
 TournamentSchema.virtual('currentStatus').get(function() {
   if (this.manualStatusOverride || this.status === 'cancelled') {
@@ -155,7 +305,6 @@ TournamentSchema.virtual('currentStatus').get(function() {
   const startDayjs = dayjs(startDateTime).utc();
   const endDayjs = dayjs(endDateTime).utc();
 
-  // FIXED: Add detailed logging for debugging
   console.log(`Tournament ${this._id} status calculation:`);
   console.log(`  Current time: ${now.format('YYYY-MM-DD HH:mm:ss')} UTC`);
   console.log(`  Start time: ${startDayjs.format('YYYY-MM-DD HH:mm:ss')} UTC`);
@@ -174,132 +323,6 @@ TournamentSchema.virtual('currentStatus').get(function() {
     return 'completed';
   }
 });
-
-
-// Fixed helper method to combine startDate and startTime
-TournamentSchema.methods.getStartDateTime = function() {
-  try {
-    // Validate inputs
-    if (!this.startDate) {
-      console.error(`Tournament ${this._id} has no startDate`);
-      return null;
-    }
-
-    if (!this.startTime || typeof this.startTime !== 'string') {
-      console.error(`Tournament ${this._id} has invalid startTime:`, this.startTime);
-      return null;
-    }
-
-    // Validate startTime format
-    if (!/^\d{1,2}:\d{2}$/.test(this.startTime)) {
-      console.error(`Tournament ${this._id} has malformed startTime:`, this.startTime);
-      return null;
-    }
-
-    // Get the date part in YYYY-MM-DD format
-    const startDate = new Date(this.startDate);
-    if (isNaN(startDate.getTime())) {
-      console.error(`Tournament ${this._id} has invalid startDate:`, this.startDate);
-      return null;
-    }
-
-    const [hours, minutes] = this.startTime.split(':').map(Number);
-    
-    // Validate parsed time values
-    if (isNaN(hours) || isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
-      console.error(`Tournament ${this._id} has invalid time values - hours: ${hours}, minutes: ${minutes}`);
-      return null;
-    }
-    
-    // Create date string in YYYY-MM-DD format (use local date, not UTC)
-    const year = startDate.getFullYear();
-    const month = String(startDate.getMonth() + 1).padStart(2, '0');
-    const day = String(startDate.getDate()).padStart(2, '0');
-    const dateString = `${year}-${month}-${day}`;
-    
-    console.log(`Tournament ${this._id} - Processing date: ${dateString}, time: ${this.startTime}, timezone: ${this.timezone}`);
-    
-    // Handle timezone conversion
-    if (this.timezone && this.timezone !== 'UTC') {
-      try {
-        // Create datetime string in user's timezone
-        const datetimeString = `${dateString} ${this.startTime}`;
-        console.log(`Creating datetime: ${datetimeString} in timezone: ${this.timezone}`);
-        
-        // Parse in the specified timezone
-        const localDateTime = dayjs.tz(datetimeString, this.timezone);
-        
-        // Check if the datetime is valid
-        if (!localDateTime.isValid()) {
-          console.error(`Invalid datetime created for tournament ${this._id}: ${datetimeString} in ${this.timezone}`);
-          return null;
-        }
-        
-        // Convert to UTC
-        const utcDateTime = localDateTime.utc();
-        
-        console.log(`Tournament ${this._id} conversion:`);
-        console.log(`  Input: ${dateString} ${this.startTime} (${this.timezone})`);
-        console.log(`  Local: ${localDateTime.format('YYYY-MM-DD HH:mm:ss')} (${this.timezone})`);
-        console.log(`  UTC: ${utcDateTime.format('YYYY-MM-DD HH:mm:ss')} (UTC)`);
-        
-        return utcDateTime.toDate();
-      } catch (timezoneError) {
-        console.error(`Error handling timezone ${this.timezone} for tournament ${this._id}:`, timezoneError);
-        // Fallback to UTC
-        const utcDate = new Date(`${dateString}T${this.startTime}:00.000Z`);
-        console.log(`Fallback to UTC: ${utcDate.toISOString()}`);
-        return utcDate;
-      }
-    } else {
-      // UTC timezone - create UTC date directly
-      const utcDate = new Date(`${dateString}T${this.startTime}:00.000Z`);
-      console.log(`Tournament ${this._id} - UTC date: ${utcDate.toISOString()}`);
-      return utcDate;
-    }
-  } catch (error) {
-    console.error(`Error calculating start date/time for tournament ${this._id}:`, error);
-    return null;
-  }
-};
-
-// Helper method to calculate end time with error handling
-TournamentSchema.methods.getEndDateTime = function() {
-  try {
-    const startDateTime = this.getStartDateTime();
-    
-    if (!startDateTime) {
-      return null;
-    }
-
-    if (!this.duration || typeof this.duration !== 'number' || this.duration <= 0) {
-      console.error(`Tournament ${this._id} has invalid duration:`, this.duration);
-      return null;
-    }
-
-    const startDayjs = dayjs(startDateTime);
-    const endDayjs = startDayjs.add(this.duration, 'millisecond');
-    
-    return endDayjs.toDate();
-  } catch (error) {
-    console.error(`Error calculating end date/time for tournament ${this._id}:`, error);
-    return null;
-  }
-};
-
-// Method to get current time in tournament's timezone
-TournamentSchema.methods.getCurrentTimeInTournamentTimezone = function() {
-  try {
-    const now = dayjs().utc();
-    if (this.timezone && this.timezone !== 'UTC') {
-      return now.tz(this.timezone);
-    }
-    return now;
-  } catch (error) {
-    console.error(`Error getting current time in timezone ${this.timezone}:`, error);
-    return dayjs().utc();
-  }
-};
 
 // Method to update status based on current time
 TournamentSchema.methods.updateStatusBasedOnTime = function() {
@@ -346,7 +369,7 @@ TournamentSchema.methods.isStartingWithinMinutes = function(minutes) {
     }
     
     const startDayjs = dayjs(startDateTime).utc();
-    const timeDiff = startDayjs.diff(now, 'minute', true); // true for floating point
+    const timeDiff = startDayjs.diff(now, 'minute', true);
     
     console.log(`Tournament ${this._id} timing check:`);
     console.log(`  Current time: ${now.format('YYYY-MM-DD HH:mm:ss')} UTC`);
@@ -385,7 +408,9 @@ TournamentSchema.methods.getTimeInfo = function() {
       minutesUntilStart: startDayjs.diff(now, 'minute', true),
       minutesUntilEnd: endDayjs.diff(now, 'minute', true),
       durationHours: this.duration / (1000 * 60 * 60),
-      timezone: this.timezone
+      timezone: this.timezone,
+      originalStartTime: this.startTime,
+      normalizedStartTime: this.normalizeTimeFormat(this.startTime)
     };
   } catch (error) {
     console.error(`Error getting time info for tournament ${this._id}:`, error);
