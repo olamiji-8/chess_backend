@@ -1394,36 +1394,8 @@ function calculateTotalPrizePool(prizes, prizeType) {
   
       // Handle special case for cancelled status
       if (status === 'cancelled' && tournament.status !== 'cancelled') {
-        // Refund entry fees to participants
-        for (const participantId of tournament.participants) {
-          const user = await User.findById(participantId);
-          
-          if (user) {
-            // Create refund transaction
-            await Transaction.create({
-              user: participantId,
-              tournament: tournamentId,
-              type: 'refund',
-              amount: tournament.entryFee,
-              reference: `REFUND-${Date.now()}-${participantId.toString().substring(0, 6)}`,
-              paymentMethod: 'wallet',
-              status: 'completed',
-              details: {
-                reason: 'Tournament cancelled by admin',
-                tournamentTitle: tournament.title
-              }
-            });
-            
-            // Update user wallet balance
-            user.walletBalance += tournament.entryFee;
-            await user.save();
-            
-            // Remove tournament from user's registered tournaments
-            await User.findByIdAndUpdate(participantId, {
-              $pull: { registeredTournaments: tournamentId }
-            });
-          }
-        }
+        // Refund logic removed: No refunds will be issued when a tournament is cancelled
+        // (Previously, this would refund entry fees to all participants)
       }
   
       // Update tournament status
