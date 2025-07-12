@@ -2,10 +2,12 @@ const mongoose = require('mongoose');
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
+const isBetween = require('dayjs/plugin/isBetween'); // Add this import
 
 // Extend dayjs with timezone plugins
 dayjs.extend(utc);
 dayjs.extend(timezone);
+dayjs.extend(isBetween); // Add this extension
 
 const TournamentSchema = new mongoose.Schema({
   title: {
@@ -112,11 +114,11 @@ const TournamentSchema = new mongoose.Schema({
   },
   actualStartTime: {
     type: Date,
-    default: null // Track when tournament actually started
+    default: null // Track when tournament actually started (in UTC)
   },
   actualEndTime: {
     type: Date,
-    default: null // Track when tournament actually ended
+    default: null // Track when tournament actually ended (in UTC)
   },
   tournamentLink: {
     type: String,
@@ -129,6 +131,11 @@ const TournamentSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now
+  },
+  // Add field to track reminder notifications
+  fiveMinuteReminderSent: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -138,7 +145,7 @@ TournamentSchema.virtual('currentStatus').get(function() {
     return this.status;
   }
 
-  const now = new Date();
+  const now = dayjs().utc(); // Get current time in UTC
   const startDateTime = this.getStartDateTime();
   const endDateTime = this.getEndDateTime();
 
@@ -148,9 +155,12 @@ TournamentSchema.virtual('currentStatus').get(function() {
     return this.status; // Return current status as fallback
   }
 
-  if (now < startDateTime) {
+  const startDayjs = dayjs(startDateTime).utc();
+  const endDayjs = dayjs(endDateTime).utc();
+
+  if (now.isBefore(startDayjs)) {
     return 'upcoming';
-  } else if (now >= startDateTime && now <= endDateTime) {
+  } else if (now.isBetween(startDayjs, endDayjs, null, '[]')) {
     return 'active';
   } else {
     return 'completed';
@@ -248,20 +258,39 @@ TournamentSchema.methods.getEndDateTime = function() {
   }
 };
 
+// Method to get current time in tournament's timezone
+TournamentSchema.methods.getCurrentTimeInTournamentTimezone = function() {
+  try {
+    const now = dayjs().utc();
+    if (this.timezone && this.timezone !== 'UTC') {
+      return now.tz(this.timezone);
+    }
+    return now;
+  } catch (error) {
+    console.error(`Error getting current time in timezone ${this.timezone}:`, error);
+    return dayjs().utc();
+  }
+};
+
 // Method to update status based on current time
 TournamentSchema.methods.updateStatusBasedOnTime = function() {
   if (!this.manualStatusOverride && this.status !== 'cancelled') {
     try {
       const calculatedStatus = this.currentStatus;
+      const previousStatus = this.status;
       
       if (this.status !== calculatedStatus) {
         this.status = calculatedStatus;
         
-        // Track actual start/end times
-        if (calculatedStatus === 'active' && !this.actualStartTime) {
-          this.actualStartTime = new Date();
-        } else if (calculatedStatus === 'completed' && !this.actualEndTime) {
-          this.actualEndTime = new Date();
+        // Track actual start/end times with proper timezone handling
+        const now = dayjs().utc().toDate(); // Store in UTC for consistency
+        
+        if (calculatedStatus === 'active' && previousStatus === 'upcoming' && !this.actualStartTime) {
+          this.actualStartTime = now;
+          console.log(`Tournament ${this._id} started at ${dayjs(now).format()}`);
+        } else if (calculatedStatus === 'completed' && previousStatus === 'active' && !this.actualEndTime) {
+          this.actualEndTime = now;
+          console.log(`Tournament ${this._id} ended at ${dayjs(now).format()}`);
         }
         
         return true; // Status was updated
@@ -271,6 +300,58 @@ TournamentSchema.methods.updateStatusBasedOnTime = function() {
     }
   }
   return false; // No update needed
+};
+
+// Method to check if tournament is starting within specified minutes
+TournamentSchema.methods.isStartingWithinMinutes = function(minutes) {
+  try {
+    const now = dayjs().utc();
+    const startDateTime = this.getStartDateTime();
+    
+    if (!startDateTime) {
+      return false;
+    }
+    
+    const startDayjs = dayjs(startDateTime).utc();
+    const timeDiff = startDayjs.diff(now, 'minute');
+    
+    return timeDiff >= 0 && timeDiff <= minutes;
+  } catch (error) {
+    console.error(`Error checking if tournament ${this._id} is starting within ${minutes} minutes:`, error);
+    return false;
+  }
+};
+
+// Method to get tournament time information
+TournamentSchema.methods.getTimeInfo = function() {
+  try {
+    const startDateTime = this.getStartDateTime();
+    const endDateTime = this.getEndDateTime();
+    const now = dayjs().utc();
+    
+    if (!startDateTime || !endDateTime) {
+      return null;
+    }
+    
+    const startDayjs = dayjs(startDateTime).utc();
+    const endDayjs = dayjs(endDateTime).utc();
+    
+    return {
+      startDateTime: startDayjs.toDate(),
+      endDateTime: endDayjs.toDate(),
+      startDateTimeFormatted: startDayjs.format('YYYY-MM-DD HH:mm:ss UTC'),
+      endDateTimeFormatted: endDayjs.format('YYYY-MM-DD HH:mm:ss UTC'),
+      currentTime: now.toDate(),
+      currentTimeFormatted: now.format('YYYY-MM-DD HH:mm:ss UTC'),
+      minutesUntilStart: startDayjs.diff(now, 'minute'),
+      minutesUntilEnd: endDayjs.diff(now, 'minute'),
+      durationHours: this.duration / (1000 * 60 * 60),
+      timezone: this.timezone
+    };
+  } catch (error) {
+    console.error(`Error getting time info for tournament ${this._id}:`, error);
+    return null;
+  }
 };
 
 // Pre-save hook to update status automatically

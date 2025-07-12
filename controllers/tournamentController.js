@@ -503,33 +503,14 @@ async function updateAllTournamentStatuses() {
     if (updatedCount > 0) {
       console.log(`Updated status for ${updatedCount} tournaments`);
     }
+    
+    return updatedCount;
   } catch (error) {
     console.error('Error updating tournament statuses:', error);
+    throw error;
   }
 }
 
-
-// // @desc    Get single tournament
-// // @route   GET /api/tournaments/:id
-// // @access  Public
-// exports.getTournament = asyncHandler(async (req, res) => {
-//   const tournament = await Tournament.findById(req.params.id)
-//     .populate('organizer', 'fullName email phoneNumber')
-//     .populate('participants', 'fullName profilePic lichessUsername');
-  
-//   if (!tournament) {
-//     return res.status(404).json({ message: 'Tournament not found' });
-//   }
-  
-//   // Convert duration from milliseconds to hours for client display
-//   const tournamentObj = tournament.toObject();
-//   tournamentObj.durationInHours = tournament.duration / 3600000;
-  
-//   res.status(200).json({
-//     success: true,
-//     data: tournamentObj
-//   });
-// });
 
 // @desc    Register for a tournament
 // @route   POST /api/tournaments/:id/register
@@ -876,24 +857,39 @@ const calculatePrizeDistribution = async (tournament, results) => {
 };
 
 // Helper function to schedule tournament reminder
-const scheduleTournamentReminder = async (tournamentId, startDate, startTime) => {
+const scheduleTournamentReminder = async (tournamentId, startDate, startTime, timezone = 'UTC') => {
   try {
-    // Parse start date and time
-    const tournamentStart = new Date(`${startDate}T${startTime}`);
+    // Create the tournament start datetime with proper timezone handling
+    const dateString = new Date(startDate).toISOString().split('T')[0];
+    let tournamentStart;
+    
+    if (timezone && timezone !== 'UTC') {
+      const localDateTime = dayjs.tz(`${dateString} ${startTime}`, timezone);
+      tournamentStart = localDateTime.utc().toDate();
+    } else {
+      tournamentStart = new Date(`${dateString}T${startTime}`);
+    }
+    
     const reminderTime = new Date(tournamentStart.getTime() - 5 * 60 * 1000); // 5 minutes before
     
     // Calculate delay in milliseconds
     const now = new Date();
     const delay = reminderTime.getTime() - now.getTime();
     
+    console.log(`Tournament ${tournamentId} reminder scheduling:`);
+    console.log(`  Tournament start: ${tournamentStart.toISOString()}`);
+    console.log(`  Reminder time: ${reminderTime.toISOString()}`);
+    console.log(`  Current time: ${now.toISOString()}`);
+    console.log(`  Delay: ${delay}ms (${Math.round(delay / 1000 / 60)} minutes)`);
+    
     if (delay > 0) {
       // Schedule the reminder
       setTimeout(async () => {
         try {
           await notifyTournamentStartingInFiveMinutes(tournamentId);
-          console.log(`5-minute reminder sent for tournament ${tournamentId}`);
+          console.log(`Scheduled 5-minute reminder sent for tournament ${tournamentId}`);
         } catch (error) {
-          console.error('Error sending 5-minute reminder:', error);
+          console.error('Error sending scheduled 5-minute reminder:', error);
         }
       }, delay);
       
@@ -912,43 +908,35 @@ const scheduleTournamentReminder = async (tournamentId, startDate, startTime) =>
 // Runs every minute to check for upcoming tournaments
 cron.schedule('* * * * *', async () => {
   try {
-    const now = new Date();
-    const fiveMinutesFromNow = new Date(now.getTime() + 5 * 60 * 1000);
+    const now = dayjs().utc();
+    console.log(`[${now.format()}] Running 5-minute reminder check...`);
     
-    // Find tournaments starting in approximately 5 minutes
-    // We check for tournaments starting between now and 6 minutes from now
-    // to account for the 1-minute cron interval
-    const sixMinutesFromNow = new Date(now.getTime() + 6 * 60 * 1000);
-    
+    // Find tournaments that are upcoming and haven't had their reminder sent
     const upcomingTournaments = await Tournament.find({
       status: 'upcoming',
-      startDate: {
-        $gte: now.toISOString().split('T')[0], // Today or later
-        $lte: fiveMinutesFromNow.toISOString().split('T')[0] // Today only for this check
-      }
+      fiveMinuteReminderSent: false
     }).populate('participants', 'fullName email');
     
+    console.log(`Found ${upcomingTournaments.length} upcoming tournaments to check`);
+    
     for (const tournament of upcomingTournaments) {
-      // Create full datetime for comparison
-      const tournamentDateTime = new Date(`${tournament.startDate.toISOString().split('T')[0]}T${tournament.startTime}`);
-      
-      // Check if tournament starts within the next 5-6 minutes
-      if (tournamentDateTime >= fiveMinutesFromNow && tournamentDateTime <= sixMinutesFromNow) {
-        // Check if we haven't already sent this notification
-        if (!tournament.fiveMinuteReminderSent) {
-          try {
-            await notifyTournamentStartingInFiveMinutes(tournament._id);
-            
-            // Mark as reminder sent to avoid duplicate notifications
-            await Tournament.findByIdAndUpdate(tournament._id, {
-              $set: { fiveMinuteReminderSent: true }
-            });
-            
-            console.log(`5-minute reminder sent for tournament: ${tournament.title}`);
-          } catch (notificationError) {
-            console.error(`Failed to send 5-minute reminder for tournament ${tournament._id}:`, notificationError);
-          }
+      try {
+        // Check if tournament is starting within 5 minutes
+        if (tournament.isStartingWithinMinutes(5)) {
+          console.log(`Tournament "${tournament.title}" is starting within 5 minutes`);
+          
+          // Send notification
+          await notifyTournamentStartingInFiveMinutes(tournament._id);
+          
+          // Mark as reminder sent to avoid duplicate notifications
+          await Tournament.findByIdAndUpdate(tournament._id, {
+            $set: { fiveMinuteReminderSent: true }
+          });
+          
+          console.log(`5-minute reminder sent for tournament: ${tournament.title}`);
         }
+      } catch (tournamentError) {
+        console.error(`Error processing tournament ${tournament._id}:`, tournamentError);
       }
     }
   } catch (error) {
@@ -958,41 +946,49 @@ cron.schedule('* * * * *', async () => {
 
 // Cron job to automatically update tournament status
 // Runs every 5 minutes to update tournament statuses
-cron.schedule('*/5 * * * *', async () => {
+cron.schedule('*/2 * * * *', async () => {
   try {
-    const now = new Date();
+    const now = dayjs().utc();
+    console.log(`[${now.format()}] Running tournament status update...`);
     
-    // Update tournaments from 'upcoming' to 'active' when they start
-    const tournamentsToStart = await Tournament.find({
-      status: 'upcoming'
+    // Find tournaments that might need status updates
+    const tournaments = await Tournament.find({
+      status: { $in: ['upcoming', 'active'] },
+      manualStatusOverride: { $ne: true }
     });
     
-    for (const tournament of tournamentsToStart) {
-      const tournamentStart = tournament.getStartDateTime();
-      
-      if (tournamentStart && now >= tournamentStart) {
-        await Tournament.findByIdAndUpdate(tournament._id, {
-          $set: { status: 'active' }
-        });
-        console.log(`Tournament ${tournament.title} status updated to active`);
+    console.log(`Found ${tournaments.length} tournaments to check for status updates`);
+    
+    let updatedCount = 0;
+    
+    for (const tournament of tournaments) {
+      try {
+        const previousStatus = tournament.status;
+        const wasUpdated = tournament.updateStatusBasedOnTime();
+        
+        if (wasUpdated) {
+          await tournament.save();
+          updatedCount++;
+          
+          console.log(`Tournament "${tournament.title}" status updated: ${previousStatus} → ${tournament.status}`);
+          
+          // Log time information for debugging
+          const timeInfo = tournament.getTimeInfo();
+          if (timeInfo) {
+            console.log(`  Start: ${timeInfo.startDateTimeFormatted}`);
+            console.log(`  End: ${timeInfo.endDateTimeFormatted}`);
+            console.log(`  Current: ${timeInfo.currentTimeFormatted}`);
+            console.log(`  Minutes until start: ${timeInfo.minutesUntilStart}`);
+            console.log(`  Minutes until end: ${timeInfo.minutesUntilEnd}`);
+          }
+        }
+      } catch (tournamentError) {
+        console.error(`Error updating tournament ${tournament._id}:`, tournamentError);
       }
     }
     
-    // Update tournaments from 'active' to 'completed' when they finish
-    const activeTournaments = await Tournament.find({
-      status: 'active'
-    });
-    
-    for (const tournament of activeTournaments) {
-      const tournamentStart = tournament.getStartDateTime();
-      const tournamentEnd = tournament.getEndDateTime();
-      
-      if (tournamentStart && tournamentEnd && now >= tournamentEnd) {
-        await Tournament.findByIdAndUpdate(tournament._id, {
-          $set: { status: 'completed' }
-        });
-        console.log(`Tournament ${tournament.title} status updated to completed`);
-      }
+    if (updatedCount > 0) {
+      console.log(`Updated status for ${updatedCount} tournaments`);
     }
   } catch (error) {
     console.error('Error in tournament status update cron job:', error);
