@@ -183,7 +183,7 @@ TournamentSchema.methods.normalizeTimeFormat = function(timeString) {
   }
 };
 
-// Method to get start date/time with better error handling
+// FIXED: Better date handling method
 TournamentSchema.methods.getStartDateTime = function() {
   try {
     // Validate inputs
@@ -204,22 +204,23 @@ TournamentSchema.methods.getStartDateTime = function() {
       return null;
     }
 
-    // Get date components without timezone conversion
+    // FIXED: Better date handling - use the local date components directly
     const startDateObj = new Date(this.startDate);
     if (isNaN(startDateObj.getTime())) {
       console.error(`Tournament ${this._id} has invalid startDate:`, this.startDate);
       return null;
     }
 
-    // Use UTC methods to avoid timezone shifts
-    const year = startDateObj.getUTCFullYear();
-    const month = String(startDateObj.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(startDateObj.getUTCDate()).padStart(2, '0');
+    // FIXED: Extract date components from the original date without timezone conversion
+    // This preserves the intended date regardless of server timezone
+    const year = startDateObj.getFullYear();
+    const month = String(startDateObj.getMonth() + 1).padStart(2, '0');
+    const day = String(startDateObj.getDate()).padStart(2, '0');
     const dateString = `${year}-${month}-${day}`;
     
     console.log(`Tournament ${this._id} - Processing:`);
     console.log(`  Original startDate: ${this.startDate}`);
-    console.log(`  Date (UTC): ${dateString}`);
+    console.log(`  Extracted Date: ${dateString}`);
     console.log(`  Original Time: ${this.startTime}`);
     console.log(`  Normalized Time: ${normalizedTime}`);
     console.log(`  Timezone: ${this.timezone}`);

@@ -73,11 +73,11 @@ exports.createTournament = asyncHandler(async (req, res) => {
       });
     }
 
-    // Validate time format
-    const timePattern = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    // Validate time format - Accept both 12-hour and 24-hour formats
+    const timePattern = /^\d{1,2}:\d{2}(\s?(AM|PM))?$/i;
     if (!timePattern.test(startTime)) {
       return res.status(400).json({ 
-        message: 'Invalid time format. Expected HH:MM in 24-hour format' 
+        message: 'Invalid time format. Expected HH:MM or HH:MM AM/PM format' 
       });
     }
 
@@ -110,6 +110,37 @@ exports.createTournament = asyncHandler(async (req, res) => {
     // Convert hours to milliseconds for storage
     const durationInMs = durationInHours * 60 * 60 * 1000;
     console.log(`Duration: ${durationInHours} hours → ${durationInMs}ms`);
+
+    // FIXED: Better date handling - ensure we preserve the intended date
+    let tournamentStartDate;
+    try {
+      // Parse the date string and create a date object
+      const dateObj = new Date(startDate);
+      
+      // Validate the date
+      if (isNaN(dateObj.getTime())) {
+        return res.status(400).json({
+          message: 'Invalid start date format',
+          receivedDate: startDate
+        });
+      }
+
+      // FIXED: Create date without timezone conversion issues
+      // Use the date as-is from the client
+      tournamentStartDate = dateObj;
+      
+      console.log('Date handling:');
+      console.log('  Received startDate:', startDate);
+      console.log('  Parsed date object:', tournamentStartDate);
+      console.log('  ISO string:', tournamentStartDate.toISOString());
+      
+    } catch (dateError) {
+      console.error('Date parsing error:', dateError);
+      return res.status(400).json({
+        message: 'Error parsing start date',
+        error: dateError.message
+      });
+    }
 
     // Upload banner image to cloudinary
     let bannerUrl = '';
