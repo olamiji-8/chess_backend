@@ -483,24 +483,34 @@ exports.getTournament = asyncHandler(async (req, res) => {
 // @route   GET /api/tournaments
 // @access  Public
 exports.getTournaments = asyncHandler(async (req, res) => {
-  const tournaments = await Tournament.find({
-    status: { $ne: 'completed' } // Exclude completed tournaments
-  })
-    .populate('organizer', 'fullName email phoneNumber')
-    .populate('participants', 'fullName profilePic lichessUsername')
-    .sort({ createdAt: -1 });
-  
-  // Update status and add registration info for each tournament
-  const tournamentsWithInfo = tournaments.map(tournament => {
-    tournament.updateStatusBasedOnTime();
-    return addRegistrationInfo(tournament);
-  });
-  
-  res.status(200).json({
-    success: true,
-    count: tournaments.length,
-    data: tournamentsWithInfo
-  });
+  try {
+    // First, update all tournament statuses
+    await updateAllTournamentStatuses();
+    
+    const tournaments = await Tournament.find()
+      .populate('organizer', 'fullName email phoneNumber')
+      .populate('participants', 'fullName profilePic lichessUsername')
+      .sort({ createdAt: -1 });
+    
+    // Update status and add registration info for each tournament
+    const tournamentsWithInfo = tournaments.map(tournament => {
+      tournament.updateStatusBasedOnTime();
+      return addRegistrationInfo(tournament);
+    });
+    
+    res.status(200).json({
+      success: true,
+      count: tournaments.length,
+      data: tournamentsWithInfo
+    });
+  } catch (error) {
+    console.error('Error in getTournaments:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching tournaments',
+      error: error.message
+    });
+  }
 });
 
 // Utility function to update all tournament statuses
@@ -510,7 +520,7 @@ async function updateAllTournamentStatuses() {
       status: { $in: ['upcoming', 'active'] },
       manualStatusOverride: { $ne: true }
     });
-
+    
     let updatedCount = 0;
     
     for (const tournament of tournaments) {
@@ -519,15 +529,12 @@ async function updateAllTournamentStatuses() {
         updatedCount++;
       }
     }
-
+    
     if (updatedCount > 0) {
       console.log(`Updated status for ${updatedCount} tournaments`);
     }
-    
-    return updatedCount;
   } catch (error) {
     console.error('Error updating tournament statuses:', error);
-    throw error;
   }
 }
 
