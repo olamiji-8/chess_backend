@@ -82,52 +82,7 @@ exports.createTournament = asyncHandler(async (req, res) => {
     }
 
     // Get user's timezone from request body or default to UTC
-    const userTimezone = timezone || 'UTC';
-    console.log('User timezone:', userTimezone);
-    console.log('Start time received:', startTime);
-    console.log('Start date received:', startDate);
-    
-    // Validate timezone conversion
-    if (userTimezone !== 'UTC') {
-      try {
-        const date = new Date(startDate);
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const dateString = `${year}-${month}-${day}`;
-        
-        const datetimeString = `${dateString} ${startTime}`;
-        const localDateTime = dayjs.tz(datetimeString, userTimezone);
-        
-        if (!localDateTime.isValid()) {
-          return res.status(400).json({
-            message: 'Invalid date/time combination for the specified timezone',
-            dateTime: datetimeString,
-            timezone: userTimezone
-          });
-        }
-        
-        const utcDateTime = localDateTime.utc();
-        console.log(`Timezone conversion: ${localDateTime.format('YYYY-MM-DD HH:mm:ss')} (${userTimezone}) → ${utcDateTime.format('YYYY-MM-DD HH:mm:ss')} (UTC)`);
-        
-        // Check if the tournament is in the past
-        const now = dayjs().utc();
-        if (utcDateTime.isBefore(now)) {
-          return res.status(400).json({
-            message: 'Tournament start time cannot be in the past',
-            tournamentTime: utcDateTime.format('YYYY-MM-DD HH:mm:ss UTC'),
-            currentTime: now.format('YYYY-MM-DD HH:mm:ss UTC')
-          });
-        }
-      } catch (timezoneError) {
-        console.error('Timezone validation error:', timezoneError);
-        return res.status(400).json({
-          message: 'Invalid timezone specified',
-          timezone: userTimezone,
-          error: timezoneError.message
-        });
-      }
-    }
+userTimezone
 
     // Parse and validate duration
     const durationInHours = parseFloat(duration);
@@ -893,17 +848,18 @@ const calculatePrizeDistribution = async (tournament, results) => {
 // Helper function to schedule tournament reminder
 const scheduleTournamentReminder = async (tournamentId, startDate, startTime, timezone = 'UTC') => {
   try {
-    // Get the date part in YYYY-MM-DD format
+    // FIXED: Use UTC methods to avoid timezone shifts
     const date = new Date(startDate);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
     const dateString = `${year}-${month}-${day}`;
     
     let tournamentStart;
     
     console.log(`Scheduling reminder for tournament ${tournamentId}:`);
-    console.log(`  Date: ${dateString}`);
+    console.log(`  Original startDate: ${startDate}`);
+    console.log(`  Date (UTC): ${dateString}`);
     console.log(`  Time: ${startTime}`);
     console.log(`  Timezone: ${timezone}`);
     
@@ -923,11 +879,12 @@ const scheduleTournamentReminder = async (tournamentId, startDate, startTime, ti
         console.log(`  UTC time: ${localDateTime.utc().format('YYYY-MM-DD HH:mm:ss')} (UTC)`);
       } catch (timezoneError) {
         console.error(`Error handling timezone ${timezone}:`, timezoneError);
-        tournamentStart = new Date(`${dateString}T${startTime}:00.000Z`);
+        // FIXED: Better fallback parsing
+        tournamentStart = dayjs.utc(`${dateString}T${startTime}:00.000Z`).toDate();
       }
     } else {
-      // UTC timezone
-      tournamentStart = new Date(`${dateString}T${startTime}:00.000Z`);
+      // FIXED: Proper UTC timezone handling
+      tournamentStart = dayjs.utc(`${dateString}T${startTime}:00.000Z`).toDate();
       console.log(`  UTC time: ${tournamentStart.toISOString()}`);
     }
     
