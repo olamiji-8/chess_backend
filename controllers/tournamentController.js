@@ -82,7 +82,7 @@ exports.createTournament = asyncHandler(async (req, res) => {
     }
 
     // Get user's timezone from request body or default to UTC
-userTimezone
+    const userTimezone = timezone || 'UTC';
 
     // Parse and validate duration
     const durationInHours = parseFloat(duration);
