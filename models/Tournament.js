@@ -183,7 +183,7 @@ TournamentSchema.methods.normalizeTimeFormat = function(timeString) {
   }
 };
 
-// Improved method to get start date/time with better error handling
+// Method to get start date/time with better error handling
 TournamentSchema.methods.getStartDateTime = function() {
   try {
     // Validate inputs
@@ -204,97 +204,14 @@ TournamentSchema.methods.getStartDateTime = function() {
       return null;
     }
 
-    // Get clean date string
-    const startDate = new Date(this.startDate);
-    if (isNaN(startDate.getTime())) {
-      console.error(`Tournament ${this._id} has invalid startDate:`, this.startDate);
-      return null;
-    }
-
-    // Create date string in YYYY-MM-DD format
-    const year = startDate.getFullYear();
-    const month = String(startDate.getMonth() + 1).padStart(2, '0');
-    const day = String(startDate.getDate()).padStart(2, '0');
-    const dateString = `${year}-${month}-${day}`;
-    
-    console.log(`Tournament ${this._id} - Processing:`);
-    console.log(`  Date: ${dateString}`);
-    console.log(`  Original Time: ${this.startTime}`);
-    console.log(`  Normalized Time: ${normalizedTime}`);
-    console.log(`  Timezone: ${this.timezone}`);
-    
-    // Handle timezone conversion
-    const timezone = this.timezone || 'UTC';
-    
-    try {
-      // Create datetime string
-      const datetimeString = `${dateString} ${normalizedTime}`;
-      console.log(`  DateTime String: ${datetimeString}`);
-      
-      let tournamentDateTime;
-      
-      if (timezone === 'UTC') {
-        // Direct UTC parsing
-        tournamentDateTime = dayjs.utc(`${dateString}T${normalizedTime}:00`);
-      } else {
-        // Parse in specified timezone, then convert to UTC
-        tournamentDateTime = dayjs.tz(datetimeString, timezone).utc();
-      }
-      
-      if (!tournamentDateTime.isValid()) {
-        console.error(`Invalid datetime created for tournament ${this._id}`);
-        return null;
-      }
-      
-      console.log(`  Final UTC DateTime: ${tournamentDateTime.format('YYYY-MM-DD HH:mm:ss')} UTC`);
-      console.log(`  ISO String: ${tournamentDateTime.toISOString()}`);
-      
-      return tournamentDateTime.toDate();
-      
-    } catch (timezoneError) {
-      console.error(`Timezone error for tournament ${this._id}:`, timezoneError);
-      // Fallback to UTC
-      const fallbackDateTime = dayjs.utc(`${dateString}T${normalizedTime}:00`);
-      console.log(`  Fallback UTC DateTime: ${fallbackDateTime.toISOString()}`);
-      return fallbackDateTime.toDate();
-    }
-    
-  } catch (error) {
-    console.error(`Error calculating start date/time for tournament ${this._id}:`, error);
-    return null;
-  }
-};
-
-// Helper method to calculate end time
-// Improved method to get start date/time with better error handling
-TournamentSchema.methods.getStartDateTime = function() {
-  try {
-    // Validate inputs
-    if (!this.startDate) {
-      console.error(`Tournament ${this._id} has no startDate`);
-      return null;
-    }
-
-    if (!this.startTime) {
-      console.error(`Tournament ${this._id} has no startTime`);
-      return null;
-    }
-
-    // Normalize time format (handle both 12-hour and 24-hour)
-    const normalizedTime = this.normalizeTimeFormat(this.startTime);
-    if (!normalizedTime) {
-      console.error(`Tournament ${this._id} has invalid startTime format:`, this.startTime);
-      return null;
-    }
-
-    // FIXED: Get date components without timezone conversion
+    // Get date components without timezone conversion
     const startDateObj = new Date(this.startDate);
     if (isNaN(startDateObj.getTime())) {
       console.error(`Tournament ${this._id} has invalid startDate:`, this.startDate);
       return null;
     }
 
-    // FIXED: Use UTC methods to avoid timezone shifts
+    // Use UTC methods to avoid timezone shifts
     const year = startDateObj.getUTCFullYear();
     const month = String(startDateObj.getUTCMonth() + 1).padStart(2, '0');
     const day = String(startDateObj.getUTCDate()).padStart(2, '0');
@@ -318,10 +235,10 @@ TournamentSchema.methods.getStartDateTime = function() {
       let tournamentDateTime;
       
       if (timezone === 'UTC') {
-        // FIXED: Use proper UTC parsing
+        // Use proper UTC parsing
         tournamentDateTime = dayjs.utc(`${dateString}T${normalizedTime}:00.000Z`);
       } else {
-        // FIXED: Parse in specified timezone, then convert to UTC
+        // Parse in specified timezone, then convert to UTC
         tournamentDateTime = dayjs.tz(datetimeString, timezone).utc();
       }
       
@@ -337,7 +254,7 @@ TournamentSchema.methods.getStartDateTime = function() {
       
     } catch (timezoneError) {
       console.error(`Timezone error for tournament ${this._id}:`, timezoneError);
-      // FIXED: Better fallback handling
+      // Better fallback handling
       const fallbackDateTime = dayjs.utc(`${dateString}T${normalizedTime}:00.000Z`);
       console.log(`  Fallback UTC DateTime: ${fallbackDateTime.toISOString()}`);
       return fallbackDateTime.toDate();
@@ -345,6 +262,37 @@ TournamentSchema.methods.getStartDateTime = function() {
     
   } catch (error) {
     console.error(`Error calculating start date/time for tournament ${this._id}:`, error);
+    return null;
+  }
+};
+
+// Method to calculate end date/time
+TournamentSchema.methods.getEndDateTime = function() {
+  try {
+    const startDateTime = this.getStartDateTime();
+    
+    if (!startDateTime) {
+      console.error(`Tournament ${this._id} has no valid start date/time`);
+      return null;
+    }
+
+    if (!this.duration || isNaN(this.duration)) {
+      console.error(`Tournament ${this._id} has invalid duration:`, this.duration);
+      return null;
+    }
+
+    // Add duration (in milliseconds) to start time
+    const endDateTime = new Date(startDateTime.getTime() + this.duration);
+    
+    console.log(`Tournament ${this._id} end time calculation:`);
+    console.log(`  Start time: ${dayjs(startDateTime).utc().format('YYYY-MM-DD HH:mm:ss')} UTC`);
+    console.log(`  Duration: ${this.duration}ms (${this.duration / (1000 * 60 * 60)} hours)`);
+    console.log(`  End time: ${dayjs(endDateTime).utc().format('YYYY-MM-DD HH:mm:ss')} UTC`);
+    
+    return endDateTime;
+    
+  } catch (error) {
+    console.error(`Error calculating end date/time for tournament ${this._id}:`, error);
     return null;
   }
 };
