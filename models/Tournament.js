@@ -212,7 +212,6 @@ TournamentSchema.methods.getStartDateTime = function() {
     }
 
     // FIXED: Extract date components from the original date without timezone conversion
-    // This preserves the intended date regardless of server timezone
     const year = startDateObj.getFullYear();
     const month = String(startDateObj.getMonth() + 1).padStart(2, '0');
     const day = String(startDateObj.getDate()).padStart(2, '0');
@@ -239,8 +238,13 @@ TournamentSchema.methods.getStartDateTime = function() {
         // Use proper UTC parsing
         tournamentDateTime = dayjs.utc(`${dateString}T${normalizedTime}:00.000Z`);
       } else {
-        // Parse in specified timezone, then convert to UTC
-        tournamentDateTime = dayjs.tz(datetimeString, timezone).utc();
+        // FIXED: Parse in specified timezone, then convert to UTC
+        // This is the key fix - we need to tell dayjs that the input time is in the specified timezone
+        tournamentDateTime = dayjs.tz(datetimeString, timezone);
+        console.log(`  Local DateTime: ${tournamentDateTime.format('YYYY-MM-DD HH:mm:ss')} (${timezone})`);
+        
+        // Convert to UTC
+        tournamentDateTime = tournamentDateTime.utc();
       }
       
       if (!tournamentDateTime.isValid()) {

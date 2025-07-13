@@ -879,18 +879,18 @@ const calculatePrizeDistribution = async (tournament, results) => {
 // Helper function to schedule tournament reminder
 const scheduleTournamentReminder = async (tournamentId, startDate, startTime, timezone = 'UTC') => {
   try {
-    // FIXED: Use UTC methods to avoid timezone shifts
+    // FIXED: Use the same date extraction logic as the model
     const date = new Date(startDate);
-    const year = date.getUTCFullYear();
-    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(date.getUTCDate()).padStart(2, '0');
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
     const dateString = `${year}-${month}-${day}`;
     
     let tournamentStart;
     
     console.log(`Scheduling reminder for tournament ${tournamentId}:`);
     console.log(`  Original startDate: ${startDate}`);
-    console.log(`  Date (UTC): ${dateString}`);
+    console.log(`  Date: ${dateString}`);
     console.log(`  Time: ${startTime}`);
     console.log(`  Timezone: ${timezone}`);
     
@@ -898,6 +898,8 @@ const scheduleTournamentReminder = async (tournamentId, startDate, startTime, ti
       try {
         // Create datetime string and parse in the specified timezone
         const datetimeString = `${dateString} ${startTime}`;
+        
+        // FIXED: Parse the time in the specified timezone, then convert to UTC
         const localDateTime = dayjs.tz(datetimeString, timezone);
         
         if (!localDateTime.isValid()) {
