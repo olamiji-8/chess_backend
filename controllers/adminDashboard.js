@@ -1473,7 +1473,7 @@ function calculateTotalPrizePool(prizes, prizeType) {
       organizerEmail: t.organizer ? t.organizer.email : 'N/A',
       organizerLichess: t.organizer ? t.organizer.lichessUsername : 'N/A',
       startDate: t.startDate ? new Date(t.startDate).toLocaleDateString() : 'N/A',
-      startTime: t.startTime || 'N/A',
+      startTime: t.getDisplayTime ? t.getDisplayTime() : (t.startTime || 'N/A'),
       duration: t.duration || 'N/A',
       status: t.status || 'N/A',
       entryFee: t.entryFee || 0,
