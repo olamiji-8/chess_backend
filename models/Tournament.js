@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const moment = require('moment-timezone');
 
 const TournamentSchema = new mongoose.Schema({
   title: {
@@ -186,17 +187,18 @@ TournamentSchema.methods.getStartDateTime = function() {
       return null;
     }
     
-    // Create a date string in the tournament's timezone
-    const dateString = `${startDate.toISOString().split('T')[0]}T${this.startTime}:00`;
-    
     // If timezone is specified and not UTC, we need to handle timezone conversion
     if (this.timezone && this.timezone !== 'UTC') {
       try {
-        // For now, we'll assume the time is in the user's local timezone
-        // and convert it to UTC for storage and comparison
-        const localDateTime = new Date(dateString);
-        console.log(`Tournament ${this._id} - Local time: ${localDateTime.toISOString()}, Timezone: ${this.timezone}`);
-        return localDateTime;
+        // Create a moment object in the user's timezone
+        const dateString = `${startDate.toISOString().split('T')[0]}T${this.startTime}:00`;
+        const userTimezoneMoment = moment.tz(dateString, this.timezone);
+        
+        // Convert to UTC for storage and comparison
+        const utcMoment = userTimezoneMoment.utc();
+        
+        console.log(`Tournament ${this._id} - User timezone: ${this.timezone}, Local time: ${userTimezoneMoment.format()}, UTC: ${utcMoment.format()}`);
+        return utcMoment.toDate();
       } catch (timezoneError) {
         console.error(`Error handling timezone ${this.timezone} for tournament ${this._id}:`, timezoneError);
         // Fallback to simple date creation
@@ -211,6 +213,53 @@ TournamentSchema.methods.getStartDateTime = function() {
   } catch (error) {
     console.error(`Error calculating start date/time for tournament ${this._id}:`, error);
     return null;
+  }
+};
+
+// Helper method to get timezone offset string
+TournamentSchema.methods.getTimezoneOffset = function() {
+  // Common timezone offsets (you can expand this)
+  const timezoneOffsets = {
+    'Africa/Lagos': '+01:00', // WAT
+    'Africa/Cairo': '+02:00', // EAT
+    'Europe/London': '+00:00', // GMT
+    'America/New_York': '-05:00', // EST
+    'America/Los_Angeles': '-08:00', // PST
+    'Asia/Tokyo': '+09:00', // JST
+    'Australia/Sydney': '+10:00', // AEST
+    'UTC': '+00:00'
+  };
+  
+  return timezoneOffsets[this.timezone] || '+00:00';
+};
+
+// Helper method to convert UTC time back to user's timezone for display
+TournamentSchema.methods.getDisplayTime = function() {
+  try {
+    if (!this.startTime || !this.timezone) {
+      return this.startTime;
+    }
+
+    // If timezone is UTC, return as-is
+    if (this.timezone === 'UTC') {
+      return this.startTime;
+    }
+
+    // Convert the stored time back to user's timezone
+    const startDateTime = this.getStartDateTime();
+    if (!startDateTime) {
+      return this.startTime;
+    }
+
+    // Use moment-timezone to convert UTC to user's timezone
+    const utcMoment = moment.utc(startDateTime);
+    const userTimezoneMoment = utcMoment.tz(this.timezone);
+    
+    // Format the time in the user's timezone
+    return userTimezoneMoment.format('HH:mm');
+  } catch (error) {
+    console.error(`Error converting display time for tournament ${this._id}:`, error);
+    return this.startTime;
   }
 };
 
@@ -274,5 +323,35 @@ TournamentSchema.pre('save', function(next) {
 // Ensure virtual fields are included in JSON output
 TournamentSchema.set('toJSON', { virtuals: true });
 TournamentSchema.set('toObject', { virtuals: true });
+
+// Helper method to get tournament time in user's timezone for display
+TournamentSchema.methods.getUserTimezoneTime = function(userTimezone) {
+  try {
+    if (!this.startTime || !userTimezone) {
+      return this.startTime;
+    }
+
+    // If timezone is UTC, return as-is
+    if (userTimezone === 'UTC') {
+      return this.startTime;
+    }
+
+    // Get the start date time in UTC
+    const startDateTime = this.getStartDateTime();
+    if (!startDateTime) {
+      return this.startTime;
+    }
+
+    // Convert UTC to user's timezone
+    const utcMoment = moment.utc(startDateTime);
+    const userTimezoneMoment = utcMoment.tz(userTimezone);
+    
+    // Format the time in the user's timezone
+    return userTimezoneMoment.format('HH:mm');
+  } catch (error) {
+    console.error(`Error converting time to user timezone ${userTimezone} for tournament ${this._id}:`, error);
+    return this.startTime;
+  }
+};
 
 module.exports = mongoose.model('Tournament', TournamentSchema);

@@ -79,6 +79,7 @@ exports.createTournament = asyncHandler(async (req, res) => {
     console.log('User timezone:', userTimezone);
     console.log('Start time received:', startTime);
     console.log('Start date received:', startDate);
+    console.log('Timezone conversion - Input time:', startTime, 'in timezone:', userTimezone);
 
 // Parse and validate duration
 const durationInHours = parseFloat(duration);
@@ -380,6 +381,12 @@ const addRegistrationInfo = (tournament) => {
   tournamentObj.startDateTime = tournament.getStartDateTime();
   tournamentObj.endDateTime = tournament.getEndDateTime();
   tournamentObj.currentStatus = tournament.currentStatus;
+  
+  // Add display time for proper timezone conversion
+  tournamentObj.displayTime = tournament.getDisplayTime();
+  
+  // Add user timezone time (for frontend display)
+  tournamentObj.userTimezoneTime = tournament.getUserTimezoneTime ? tournament.getUserTimezoneTime('Africa/Lagos') : tournament.startTime;
   
   // Add registration link
   tournamentObj.registrationLink = generateRegistrationLink(tournament._id);
