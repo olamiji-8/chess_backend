@@ -14,6 +14,10 @@ const UserSchema = new mongoose.Schema({
     trim: true,
     lowercase: true
   },
+  timezone: {
+  type: String,
+  default: 'UTC'
+},
   password: {
     type: String,
     required: [true, 'Password is required'],

@@ -73,54 +73,74 @@ exports.createTournament = asyncHandler(async (req, res) => {
       });
     }
 
-    // Validate time format
-    const timePattern = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    // Validate time format - Accept both 12-hour and 24-hour formats
+    const timePattern = /^\d{1,2}:\d{2}(\s?(AM|PM))?$/i;
     if (!timePattern.test(startTime)) {
       return res.status(400).json({ 
-        message: 'Invalid time format. Expected HH:MM in 24-hour format' 
+        message: 'Invalid time format. Expected HH:MM or HH:MM AM/PM format' 
       });
     }
 
     // Get user's timezone from request body or default to UTC
     const userTimezone = timezone || 'UTC';
-    console.log('User timezone:', userTimezone);
-    console.log('Start time received:', startTime);
-    console.log('Start date received:', startDate);
-    
-    // Log timezone conversion for debugging
-    if (userTimezone !== 'UTC') {
-      const dateString = new Date(startDate).toISOString().split('T')[0];
-      const localDateTime = dayjs.tz(`${dateString} ${startTime}`, userTimezone);
-      const utcDateTime = localDateTime.utc();
-      console.log(`Timezone conversion: ${localDateTime.format()} (${userTimezone}) → ${utcDateTime.format()} (UTC)`);
+
+    // Parse and validate duration
+    const durationInHours = parseFloat(duration);
+    console.log('Duration received:', duration, 'Parsed:', durationInHours);
+
+    // Check if duration is a valid number
+    if (isNaN(durationInHours)) {
+      return res.status(400).json({
+        message: 'Invalid duration. Duration must be a valid number.',
+        receivedDuration: duration,
+        parsedDuration: durationInHours
+      });
     }
 
-// Parse and validate duration
-const durationInHours = parseFloat(duration);
-console.log('Duration received:', duration, 'Parsed:', durationInHours);
+    // Set minimum duration (5 minutes = 5/60 hours = 0.083 hours)
+    const minimumDurationHours = 5 / 60; // 5 minutes in hours
+    if (durationInHours < minimumDurationHours) {
+      return res.status(400).json({
+        message: `Tournament duration must be at least 5 minutes.`,
+        receivedDuration: `${durationInHours} hours`,
+        minimumRequired: `${minimumDurationHours} hours (5 minutes)`
+      });
+    }
 
-// Check if duration is a valid number
-if (isNaN(durationInHours)) {
-  return res.status(400).json({
-    message: 'Invalid duration. Duration must be a valid number.',
-    receivedDuration: duration,
-    parsedDuration: durationInHours
-  });
-}
+    // Convert hours to milliseconds for storage
+    const durationInMs = durationInHours * 60 * 60 * 1000;
+    console.log(`Duration: ${durationInHours} hours → ${durationInMs}ms`);
 
-// Set minimum duration (5 minutes = 5/60 hours = 0.083 hours)
-const minimumDurationHours = 5 / 60; // 5 minutes in hours
-if (durationInHours < minimumDurationHours) {
-  return res.status(400).json({
-    message: `Tournament duration must be at least 5 minutes.`,
-    receivedDuration: `${durationInHours} hours`,
-    minimumRequired: `${minimumDurationHours} hours (5 minutes)`
-  });
-}
+    // FIXED: Better date handling - ensure we preserve the intended date
+    let tournamentStartDate;
+    try {
+      // Parse the date string and create a date object
+      const dateObj = new Date(startDate);
+      
+      // Validate the date
+      if (isNaN(dateObj.getTime())) {
+        return res.status(400).json({
+          message: 'Invalid start date format',
+          receivedDate: startDate
+        });
+      }
 
-// Convert hours to milliseconds for storage
-const durationInMs = durationInHours * 60 * 60 * 1000;
-console.log(`Duration: ${durationInHours} hours → ${durationInMs}ms`);
+      // FIXED: Create date without timezone conversion issues
+      // Use the date as-is from the client
+      tournamentStartDate = dateObj;
+      
+      console.log('Date handling:');
+      console.log('  Received startDate:', startDate);
+      console.log('  Parsed date object:', tournamentStartDate);
+      console.log('  ISO string:', tournamentStartDate.toISOString());
+      
+    } catch (dateError) {
+      console.error('Date parsing error:', dateError);
+      return res.status(400).json({
+        message: 'Error parsing start date',
+        error: dateError.message
+      });
+    }
 
     // Upload banner image to cloudinary
     let bannerUrl = '';
@@ -463,24 +483,34 @@ exports.getTournament = asyncHandler(async (req, res) => {
 // @route   GET /api/tournaments
 // @access  Public
 exports.getTournaments = asyncHandler(async (req, res) => {
-  const tournaments = await Tournament.find({
-    status: { $ne: 'completed' } // Exclude completed tournaments
-  })
-    .populate('organizer', 'fullName email phoneNumber')
-    .populate('participants', 'fullName profilePic lichessUsername')
-    .sort({ createdAt: -1 });
-  
-  // Update status and add registration info for each tournament
-  const tournamentsWithInfo = tournaments.map(tournament => {
-    tournament.updateStatusBasedOnTime();
-    return addRegistrationInfo(tournament);
-  });
-  
-  res.status(200).json({
-    success: true,
-    count: tournaments.length,
-    data: tournamentsWithInfo
-  });
+  try {
+    // First, update all tournament statuses
+    await updateAllTournamentStatuses();
+    
+    const tournaments = await Tournament.find()
+      .populate('organizer', 'fullName email phoneNumber')
+      .populate('participants', 'fullName profilePic lichessUsername')
+      .sort({ createdAt: -1 });
+    
+    // Update status and add registration info for each tournament
+    const tournamentsWithInfo = tournaments.map(tournament => {
+      tournament.updateStatusBasedOnTime();
+      return addRegistrationInfo(tournament);
+    });
+    
+    res.status(200).json({
+      success: true,
+      count: tournaments.length,
+      data: tournamentsWithInfo
+    });
+  } catch (error) {
+    console.error('Error in getTournaments:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching tournaments',
+      error: error.message
+    });
+  }
 });
 
 // Utility function to update all tournament statuses
@@ -490,7 +520,7 @@ async function updateAllTournamentStatuses() {
       status: { $in: ['upcoming', 'active'] },
       manualStatusOverride: { $ne: true }
     });
-
+    
     let updatedCount = 0;
     
     for (const tournament of tournaments) {
@@ -499,7 +529,7 @@ async function updateAllTournamentStatuses() {
         updatedCount++;
       }
     }
-
+    
     if (updatedCount > 0) {
       console.log(`Updated status for ${updatedCount} tournaments`);
     }
@@ -507,7 +537,6 @@ async function updateAllTournamentStatuses() {
     return updatedCount;
   } catch (error) {
     console.error('Error updating tournament statuses:', error);
-    throw error;
   }
 }
 
@@ -859,24 +888,53 @@ const calculatePrizeDistribution = async (tournament, results) => {
 // Helper function to schedule tournament reminder
 const scheduleTournamentReminder = async (tournamentId, startDate, startTime, timezone = 'UTC') => {
   try {
-    // Create the tournament start datetime with proper timezone handling
-    const dateString = new Date(startDate).toISOString().split('T')[0];
+    // FIXED: Use the same date extraction logic as the model
+    const date = new Date(startDate);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const dateString = `${year}-${month}-${day}`;
+    
     let tournamentStart;
     
+    console.log(`Scheduling reminder for tournament ${tournamentId}:`);
+    console.log(`  Original startDate: ${startDate}`);
+    console.log(`  Date: ${dateString}`);
+    console.log(`  Time: ${startTime}`);
+    console.log(`  Timezone: ${timezone}`);
+    
     if (timezone && timezone !== 'UTC') {
-      const localDateTime = dayjs.tz(`${dateString} ${startTime}`, timezone);
-      tournamentStart = localDateTime.utc().toDate();
+      try {
+        // Create datetime string and parse in the specified timezone
+        const datetimeString = `${dateString} ${startTime}`;
+        
+        // FIXED: Parse the time in the specified timezone, then convert to UTC
+        const localDateTime = dayjs.tz(datetimeString, timezone);
+        
+        if (!localDateTime.isValid()) {
+          console.error(`Invalid datetime for tournament ${tournamentId}: ${datetimeString} in ${timezone}`);
+          return;
+        }
+        
+        tournamentStart = localDateTime.utc().toDate();
+        console.log(`  Local time: ${localDateTime.format('YYYY-MM-DD HH:mm:ss')} (${timezone})`);
+        console.log(`  UTC time: ${localDateTime.utc().format('YYYY-MM-DD HH:mm:ss')} (UTC)`);
+      } catch (timezoneError) {
+        console.error(`Error handling timezone ${timezone}:`, timezoneError);
+        // FIXED: Better fallback parsing
+        tournamentStart = dayjs.utc(`${dateString}T${startTime}:00.000Z`).toDate();
+      }
     } else {
-      tournamentStart = new Date(`${dateString}T${startTime}`);
+      // FIXED: Proper UTC timezone handling
+      tournamentStart = dayjs.utc(`${dateString}T${startTime}:00.000Z`).toDate();
+      console.log(`  UTC time: ${tournamentStart.toISOString()}`);
     }
     
     const reminderTime = new Date(tournamentStart.getTime() - 5 * 60 * 1000); // 5 minutes before
-    
-    // Calculate delay in milliseconds
     const now = new Date();
     const delay = reminderTime.getTime() - now.getTime();
     
-    console.log(`Tournament ${tournamentId} reminder scheduling:`);
+    console.log(`Reminder scheduling details:`);
     console.log(`  Tournament start: ${tournamentStart.toISOString()}`);
     console.log(`  Reminder time: ${reminderTime.toISOString()}`);
     console.log(`  Current time: ${now.toISOString()}`);
@@ -893,9 +951,9 @@ const scheduleTournamentReminder = async (tournamentId, startDate, startTime, ti
         }
       }, delay);
       
-      console.log(`Tournament reminder scheduled for ${reminderTime.toISOString()}`);
+      console.log(`Tournament reminder scheduled successfully for ${reminderTime.toISOString()}`);
     } else {
-      console.log('Tournament start time has already passed, no reminder scheduled');
+      console.log(`Tournament start time has already passed (${Math.abs(Math.round(delay / 1000 / 60))} minutes ago), no reminder scheduled`);
     }
   } catch (error) {
     console.error('Error scheduling tournament reminder:', error);
@@ -1312,6 +1370,5 @@ exports.getTournamentParticipants = asyncHandler(async (req, res) => {
     });
   }
 });
-
 
 
