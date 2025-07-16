@@ -1008,7 +1008,7 @@ exports.notifyTournamentRegistration = async (userId, tournamentId) => {
     const title = `✅ You have successfully joined ${tournament.title}.`;
     
     // Message content matches documentation exactly - wrapped in clickable link
-    let message = `<a href="${tournament.tournamentLink}" target="_blank" rel="noopener noreferrer">Your seat is secured! You've successfully joined the ${tournament.title}. Make sure to prepare ahead and bring your A-game. We'll notify you when it's about to begin.`;
+    let message = `<a href="${tournament.tournamentLink}" target="_blank" rel="noopener noreferrer">Your seat is secured! You've successfully joined the ${tournament.title}. Make sure to prepare ahead and bring your A-game.`;
     
     // Add password if provided
     if (tournament.password && tournament.password.trim() !== '') {

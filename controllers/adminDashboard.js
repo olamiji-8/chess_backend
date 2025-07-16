@@ -5082,6 +5082,218 @@ exports.adminPrizesPayout = async (req, res) => {
   }
 };
 
+
+exports.getAllDeposits = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+    const transactionType = req.query.type || 'deposit'; // 'deposit' or 'withdrawal'
+    const status = req.query.status; // 'pending', 'completed', 'failed', or undefined for all
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'createdAt';
+    const sortOrder = req.query.sortOrder === 'asc' ? 1 : -1;
+    const dateFrom = req.query.dateFrom;
+    const dateTo = req.query.dateTo;
+    
+    // Build query based on transaction type
+    const query = { type: transactionType };
+    
+    // Add status filter if provided
+    if (status && ['pending', 'completed', 'failed'].includes(status)) {
+      query.status = status;
+    }
+    
+    // Add date range filter
+    if (dateFrom || dateTo) {
+      query.createdAt = {};
+      if (dateFrom) {
+        query.createdAt.$gte = new Date(dateFrom);
+      }
+      if (dateTo) {
+        query.createdAt.$lte = new Date(dateTo);
+      }
+    }
+    
+    // Add search functionality
+    if (search) {
+      // Look up users by the search term, then find transactions for those users
+      const users = await User.find({
+        $or: [
+          { fullName: { $regex: search, $options: 'i' } },
+          { email: { $regex: search, $options: 'i' } },
+          { lichessUsername: { $regex: search, $options: 'i' } }
+        ]
+      }).select('_id');
+      
+      const userIds = users.map(user => user._id);
+      
+      // Add user IDs to the query or search by reference
+      if (userIds.length > 0) {
+        query.$or = [
+          { user: { $in: userIds } },
+          { reference: { $regex: search, $options: 'i' } }
+        ];
+      } else {
+        // If no users match, search by reference only
+        query.reference = { $regex: search, $options: 'i' };
+      }
+    }
+    
+    // Count total documents for pagination
+    const totalDocs = await Transaction.countDocuments(query);
+    
+    // Create sort object
+    const sort = {};
+    sort[sortBy] = sortOrder;
+    
+    // Get transactions with user details using aggregation
+    const transactions = await Transaction.aggregate([
+      { $match: query },
+      { $sort: sort },
+      { $skip: skip },
+      { $limit: limit },
+      { 
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'userDetails'
+        }
+      },
+      { $unwind: '$userDetails' },
+      {
+        $project: {
+          _id: 1,
+          amount: 1,
+          status: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          reference: 1,
+          paymentMethod: 1,
+          details: 1,
+          metadata: 1,
+          type: 1,
+          'userDetails._id': 1,
+          'userDetails.fullName': 1,
+          'userDetails.email': 1,
+          'userDetails.lichessUsername': 1,
+          'userDetails.walletBalance': 1
+        }
+      }
+    ]);
+
+    // Get counts for each status for the specific transaction type
+    const pendingCount = await Transaction.countDocuments({ type: transactionType, status: 'pending' });
+    const completedCount = await Transaction.countDocuments({ type: transactionType, status: 'completed' });
+    const failedCount = await Transaction.countDocuments({ type: transactionType, status: 'failed' });
+
+    // Get total amount for completed transactions of this type
+    const totalAmountResult = await Transaction.aggregate([
+      { $match: { type: transactionType, status: 'completed' } },
+      { $group: { _id: null, totalAmount: { $sum: '$amount' } } }
+    ]);
+    const totalAmount = totalAmountResult.length > 0 ? totalAmountResult[0].totalAmount : 0;
+
+    res.status(200).json({
+      success: true,
+      pagination: {
+        total: totalDocs,
+        page,
+        limit,
+        pages: Math.ceil(totalDocs / limit)
+      },
+      counts: {
+        pending: pendingCount,
+        completed: completedCount,
+        failed: failedCount,
+        total: totalDocs
+      },
+      stats: {
+        totalAmount,
+        transactionType
+      },
+      data: transactions
+    });
+  } catch (error) {
+    console.error(`Error fetching ${transactionType}s:`, error);
+    res.status(500).json({
+      success: false,
+      message: `Error fetching ${transactionType}s`,
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get transaction by ID (works for both deposits and withdrawals)
+ * @route   GET /api/admin/deposits/:id or /api/admin/withdrawals/:id
+ * @access  Private/Admin
+ */
+exports.getDepositById = async (req, res) => {
+  try {
+    const transactionId = req.params.id;
+    const transactionType = req.query.type || 'deposit'; // Default to deposit for backward compatibility
+
+    if (!mongoose.Types.ObjectId.isValid(transactionId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid transaction ID'
+      });
+    }
+
+    const transaction = await Transaction.findOne({
+      _id: transactionId,
+      type: transactionType
+    });
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        message: `${transactionType.charAt(0).toUpperCase() + transactionType.slice(1)} not found`
+      });
+    }
+
+    // Get user details
+    const user = await User.findById(transaction.user).select(
+      'fullName email lichessUsername walletBalance profilePic phoneNumber'
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User associated with this transaction not found'
+      });
+    }
+
+    // Get transaction history for this user of the same type
+    const transactionHistory = await Transaction.find({
+      user: transaction.user,
+      type: transactionType
+    })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .select('amount status createdAt reference paymentMethod');
+
+    res.status(200).json({
+      success: true,
+      data: {
+        transaction,
+        user,
+        transactionHistory
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching transaction details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching transaction details',
+      error: error.message
+    });
+  }
+};
+
+
 /**
  * GET TOURNAMENT PAYOUTS
  * Route: GET /api/admin/tournaments/:tournamentId/payouts
