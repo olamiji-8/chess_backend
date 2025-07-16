@@ -5088,8 +5088,8 @@ exports.getAllDeposits = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 25;
     const skip = (page - 1) * limit;
-    const transactionType = req.query.type || 'deposit'; // 'deposit' or 'withdrawal'
-    const status = req.query.status; // 'pending', 'completed', 'failed', or undefined for all
+    const transactionType = req.query.type || 'withdrawal'; // Changed from 'deposit' to 'withdrawal'
+    const status = req.query.status; // 'pending', 'withdrawal', 'failed', or undefined for all
     const search = req.query.search || '';
     const sortBy = req.query.sortBy || 'createdAt';
     const sortOrder = req.query.sortOrder === 'asc' ? 1 : -1;
@@ -5099,8 +5099,8 @@ exports.getAllDeposits = async (req, res) => {
     // Build query based on transaction type
     const query = { type: transactionType };
     
-    // Add status filter if provided
-    if (status && ['pending', 'completed', 'failed'].includes(status)) {
+    // Add status filter if provided - changed 'completed' to 'withdrawal'
+    if (status && ['pending', 'withdrawal', 'failed'].includes(status)) {
       query.status = status;
     }
     
@@ -5163,6 +5163,17 @@ exports.getAllDeposits = async (req, res) => {
       },
       { $unwind: '$userDetails' },
       {
+        $addFields: {
+          // Add formatted date field
+          date: {
+            $dateToString: {
+              format: "%B %d, %Y",
+              date: "$createdAt"
+            }
+          }
+        }
+      },
+      {
         $project: {
           _id: 1,
           amount: 1,
@@ -5174,6 +5185,7 @@ exports.getAllDeposits = async (req, res) => {
           details: 1,
           metadata: 1,
           type: 1,
+          date: 1, // Include the formatted date
           'userDetails._id': 1,
           'userDetails.fullName': 1,
           'userDetails.email': 1,
@@ -5183,14 +5195,14 @@ exports.getAllDeposits = async (req, res) => {
       }
     ]);
 
-    // Get counts for each status for the specific transaction type
+    // Get counts for each status for the specific transaction type - changed 'completed' to 'withdrawal'
     const pendingCount = await Transaction.countDocuments({ type: transactionType, status: 'pending' });
-    const completedCount = await Transaction.countDocuments({ type: transactionType, status: 'completed' });
+    const withdrawalCount = await Transaction.countDocuments({ type: transactionType, status: 'withdrawal' });
     const failedCount = await Transaction.countDocuments({ type: transactionType, status: 'failed' });
 
-    // Get total amount for completed transactions of this type
+    // Get total amount for withdrawal transactions of this type
     const totalAmountResult = await Transaction.aggregate([
-      { $match: { type: transactionType, status: 'completed' } },
+      { $match: { type: transactionType, status: 'withdrawal' } }, // Changed from 'completed' to 'withdrawal'
       { $group: { _id: null, totalAmount: { $sum: '$amount' } } }
     ]);
     const totalAmount = totalAmountResult.length > 0 ? totalAmountResult[0].totalAmount : 0;
@@ -5205,7 +5217,7 @@ exports.getAllDeposits = async (req, res) => {
       },
       counts: {
         pending: pendingCount,
-        completed: completedCount,
+        withdrawal: withdrawalCount, // Changed from 'completed' to 'withdrawal'
         failed: failedCount,
         total: totalDocs
       },
@@ -5233,7 +5245,7 @@ exports.getAllDeposits = async (req, res) => {
 exports.getDepositById = async (req, res) => {
   try {
     const transactionId = req.params.id;
-    const transactionType = req.query.type || 'deposit'; // Default to deposit for backward compatibility
+    const transactionType = req.query.type || 'withdrawal'; // Changed default to 'withdrawal'
 
     if (!mongoose.Types.ObjectId.isValid(transactionId)) {
       return res.status(400).json({
@@ -5266,19 +5278,53 @@ exports.getDepositById = async (req, res) => {
       });
     }
 
-    // Get transaction history for this user of the same type
-    const transactionHistory = await Transaction.find({
-      user: transaction.user,
-      type: transactionType
-    })
-      .sort({ createdAt: -1 })
-      .limit(10)
-      .select('amount status createdAt reference paymentMethod');
+    // Get transaction history for this user of the same type with formatted dates
+    const transactionHistory = await Transaction.aggregate([
+      {
+        $match: {
+          user: transaction.user,
+          type: transactionType
+        }
+      },
+      {
+        $sort: { createdAt: -1 }
+      },
+      {
+        $limit: 10
+      },
+      {
+        $addFields: {
+          date: {
+            $dateToString: {
+              format: "%B %d, %Y",
+              date: "$createdAt"
+            }
+          }
+        }
+      },
+      {
+        $project: {
+          amount: 1,
+          status: 1,
+          createdAt: 1,
+          reference: 1,
+          paymentMethod: 1,
+          date: 1
+        }
+      }
+    ]);
 
     res.status(200).json({
       success: true,
       data: {
-        transaction,
+        transaction: {
+          ...transaction.toObject(),
+          date: transaction.createdAt.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          })
+        },
         user,
         transactionHistory
       }
