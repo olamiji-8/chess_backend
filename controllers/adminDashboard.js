@@ -5099,9 +5099,10 @@ exports.getAllDeposits = async (req, res) => {
     // Build query based on transaction type
     const query = { type: transactionType };
     
-    // Add status filter if provided - changed 'completed' to 'withdrawal'
+    // Add status filter if provided - map 'withdrawal' to 'completed' for database query
     if (status && ['pending', 'withdrawal', 'failed'].includes(status)) {
-      query.status = status;
+      // If frontend sends 'withdrawal', query for 'completed' in database
+      query.status = status === 'withdrawal' ? 'completed' : status;
     }
     
     // Add date range filter
@@ -5170,6 +5171,14 @@ exports.getAllDeposits = async (req, res) => {
               format: "%B %d, %Y",
               date: "$createdAt"
             }
+          },
+          // Map 'completed' status to 'withdrawal' in response
+          displayStatus: {
+            $cond: {
+              if: { $eq: ["$status", "completed"] },
+              then: "withdrawal",
+              else: "$status"
+            }
           }
         }
       },
@@ -5177,7 +5186,7 @@ exports.getAllDeposits = async (req, res) => {
         $project: {
           _id: 1,
           amount: 1,
-          status: 1,
+          status: "$displayStatus", // Use the mapped status instead of original
           createdAt: 1,
           updatedAt: 1,
           reference: 1,
@@ -5195,14 +5204,14 @@ exports.getAllDeposits = async (req, res) => {
       }
     ]);
 
-    // Get counts for each status for the specific transaction type - changed 'completed' to 'withdrawal'
+    // Get counts for each status for the specific transaction type - use 'completed' for database query
     const pendingCount = await Transaction.countDocuments({ type: transactionType, status: 'pending' });
-    const withdrawalCount = await Transaction.countDocuments({ type: transactionType, status: 'withdrawal' });
+    const withdrawalCount = await Transaction.countDocuments({ type: transactionType, status: 'completed' }); // Query 'completed' but display as 'withdrawal'
     const failedCount = await Transaction.countDocuments({ type: transactionType, status: 'failed' });
 
-    // Get total amount for withdrawal transactions of this type
+    // Get total amount for completed transactions (displayed as withdrawal)
     const totalAmountResult = await Transaction.aggregate([
-      { $match: { type: transactionType, status: 'withdrawal' } }, // Changed from 'completed' to 'withdrawal'
+      { $match: { type: transactionType, status: 'completed' } }, // Query for 'completed' status
       { $group: { _id: null, totalAmount: { $sum: '$amount' } } }
     ]);
     const totalAmount = totalAmountResult.length > 0 ? totalAmountResult[0].totalAmount : 0;
@@ -5299,13 +5308,21 @@ exports.getDepositById = async (req, res) => {
               format: "%B %d, %Y",
               date: "$createdAt"
             }
+          },
+          // Map 'completed' status to 'withdrawal' in response
+          displayStatus: {
+            $cond: {
+              if: { $eq: ["$status", "completed"] },
+              then: "withdrawal",
+              else: "$status"
+            }
           }
         }
       },
       {
         $project: {
           amount: 1,
-          status: 1,
+          status: "$displayStatus", // Use mapped status
           createdAt: 1,
           reference: 1,
           paymentMethod: 1,
@@ -5319,6 +5336,8 @@ exports.getDepositById = async (req, res) => {
       data: {
         transaction: {
           ...transaction.toObject(),
+          // Map the status for display
+          status: transaction.status === 'completed' ? 'withdrawal' : transaction.status,
           date: transaction.createdAt.toLocaleDateString('en-US', {
             year: 'numeric',
             month: 'long',
