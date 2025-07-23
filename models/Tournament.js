@@ -1,13 +1,5 @@
 const mongoose = require('mongoose');
-const dayjs = require('dayjs');
-const utc = require('dayjs/plugin/utc');
-const timezone = require('dayjs/plugin/timezone');
-const isBetween = require('dayjs/plugin/isBetween');
-
-// Extend dayjs with timezone plugins
-dayjs.extend(utc);
-dayjs.extend(timezone);
-dayjs.extend(isBetween);
+const { DateTime } = require('luxon');
 
 const TournamentSchema = new mongoose.Schema({
   title: {
@@ -183,7 +175,7 @@ TournamentSchema.methods.normalizeTimeFormat = function(timeString) {
   }
 };
 
-// FIXED: Better date handling method
+// Enhanced date handling method using Luxon
 TournamentSchema.methods.getStartDateTime = function() {
   try {
     // Validate inputs
@@ -204,14 +196,13 @@ TournamentSchema.methods.getStartDateTime = function() {
       return null;
     }
 
-    // FIXED: Better date handling - use the local date components directly
+    // Extract date components from the original date without timezone conversion
     const startDateObj = new Date(this.startDate);
     if (isNaN(startDateObj.getTime())) {
       console.error(`Tournament ${this._id} has invalid startDate:`, this.startDate);
       return null;
     }
 
-    // FIXED: Extract date components from the original date without timezone conversion
     const year = startDateObj.getFullYear();
     const month = String(startDateObj.getMonth() + 1).padStart(2, '0');
     const day = String(startDateObj.getDate()).padStart(2, '0');
@@ -224,45 +215,44 @@ TournamentSchema.methods.getStartDateTime = function() {
     console.log(`  Normalized Time: ${normalizedTime}`);
     console.log(`  Timezone: ${this.timezone}`);
     
-    // Handle timezone conversion
+    // Handle timezone conversion using Luxon
     const timezone = this.timezone || 'UTC';
     
     try {
-      // Create datetime string
-      const datetimeString = `${dateString} ${normalizedTime}`;
-      console.log(`  DateTime String: ${datetimeString}`);
+      // Create datetime string in ISO format for Luxon
+      const datetimeISO = `${dateString}T${normalizedTime}:00`;
+      console.log(`  ISO DateTime String: ${datetimeISO}`);
       
       let tournamentDateTime;
       
       if (timezone === 'UTC') {
-        // Use proper UTC parsing
-        tournamentDateTime = dayjs.utc(`${dateString}T${normalizedTime}:00.000Z`);
+        // Parse as UTC
+        tournamentDateTime = DateTime.fromISO(datetimeISO, { zone: 'UTC' });
       } else {
-        // FIXED: Parse in specified timezone, then convert to UTC
-        // This is the key fix - we need to tell dayjs that the input time is in the specified timezone
-        tournamentDateTime = dayjs.tz(datetimeString, timezone);
-        console.log(`  Local DateTime: ${tournamentDateTime.format('YYYY-MM-DD HH:mm:ss')} (${timezone})`);
+        // Parse in specified timezone, then convert to UTC
+        tournamentDateTime = DateTime.fromISO(datetimeISO, { zone: timezone });
+        console.log(`  Local DateTime: ${tournamentDateTime.toFormat('yyyy-MM-dd HH:mm:ss')} (${timezone})`);
         
         // Convert to UTC
-        tournamentDateTime = tournamentDateTime.utc();
+        tournamentDateTime = tournamentDateTime.toUTC();
       }
       
-      if (!tournamentDateTime.isValid()) {
-        console.error(`Invalid datetime created for tournament ${this._id}`);
+      if (!tournamentDateTime.isValid) {
+        console.error(`Invalid datetime created for tournament ${this._id}:`, tournamentDateTime.invalidReason);
         return null;
       }
       
-      console.log(`  Final UTC DateTime: ${tournamentDateTime.format('YYYY-MM-DD HH:mm:ss')} UTC`);
-      console.log(`  ISO String: ${tournamentDateTime.toISOString()}`);
+      console.log(`  Final UTC DateTime: ${tournamentDateTime.toFormat('yyyy-MM-dd HH:mm:ss')} UTC`);
+      console.log(`  ISO String: ${tournamentDateTime.toISO()}`);
       
-      return tournamentDateTime.toDate();
+      return tournamentDateTime.toJSDate();
       
     } catch (timezoneError) {
       console.error(`Timezone error for tournament ${this._id}:`, timezoneError);
       // Better fallback handling
-      const fallbackDateTime = dayjs.utc(`${dateString}T${normalizedTime}:00.000Z`);
-      console.log(`  Fallback UTC DateTime: ${fallbackDateTime.toISOString()}`);
-      return fallbackDateTime.toDate();
+      const fallbackDateTime = DateTime.fromISO(`${dateString}T${normalizedTime}:00`, { zone: 'UTC' });
+      console.log(`  Fallback UTC DateTime: ${fallbackDateTime.toISO()}`);
+      return fallbackDateTime.toJSDate();
     }
     
   } catch (error) {
@@ -290,9 +280,9 @@ TournamentSchema.methods.getEndDateTime = function() {
     const endDateTime = new Date(startDateTime.getTime() + this.duration);
     
     console.log(`Tournament ${this._id} end time calculation:`);
-    console.log(`  Start time: ${dayjs(startDateTime).utc().format('YYYY-MM-DD HH:mm:ss')} UTC`);
-    console.log(`  Duration: ${this.duration}ms (${this.duration / (1000 * 60 * 60)} hours)`);
-    console.log(`  End time: ${dayjs(endDateTime).utc().format('YYYY-MM-DD HH:mm:ss')} UTC`);
+    console.log(`  Start time: ${DateTime.fromJSDate(startDateTime).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')} UTC`);
+    console.log(`  Duration: ${this.duration}ms (${this.duration / (1000 * 60)} minutes)`);
+    console.log(`  End time: ${DateTime.fromJSDate(endDateTime).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')} UTC`);
     
     return endDateTime;
     
@@ -302,13 +292,57 @@ TournamentSchema.methods.getEndDateTime = function() {
   }
 };
 
+// Method to get tournament times in user's timezone
+TournamentSchema.methods.getTimesInTimezone = function(targetTimezone = null) {
+  try {
+    const timezone = targetTimezone || this.timezone || 'UTC';
+    const startDateTime = this.getStartDateTime();
+    const endDateTime = this.getEndDateTime();
+    
+    if (!startDateTime || !endDateTime) {
+      return null;
+    }
+    
+    const startInTimezone = DateTime.fromJSDate(startDateTime).setZone(timezone);
+    const endInTimezone = DateTime.fromJSDate(endDateTime).setZone(timezone);
+    
+    return {
+      startDateTime: startInTimezone.toJSDate(),
+      endDateTime: endInTimezone.toJSDate(),
+      startDateTimeFormatted: startInTimezone.toFormat('yyyy-MM-dd HH:mm:ss'),
+      endDateTimeFormatted: endInTimezone.toFormat('yyyy-MM-dd HH:mm:ss'),
+      timezone: timezone
+    };
+  } catch (error) {
+    console.error(`Error getting times in timezone for tournament ${this._id}:`, error);
+    return null;
+  }
+};
+
+// Method to check if tournament is starting within specified minutes
+TournamentSchema.methods.isStartingWithinMinutes = function(minutes) {
+  try {
+    const startDateTime = this.getStartDateTime();
+    if (!startDateTime) return false;
+    
+    const now = DateTime.utc();
+    const start = DateTime.fromJSDate(startDateTime).toUTC();
+    const diffInMinutes = start.diff(now, 'minutes').minutes;
+    
+    return diffInMinutes > 0 && diffInMinutes <= minutes;
+  } catch (error) {
+    console.error(`Error checking start time for tournament ${this._id}:`, error);
+    return false;
+  }
+};
+
 // Virtual field to calculate real-time status
 TournamentSchema.virtual('currentStatus').get(function() {
   if (this.manualStatusOverride || this.status === 'cancelled') {
     return this.status;
   }
 
-  const now = dayjs().utc();
+  const now = DateTime.utc();
   const startDateTime = this.getStartDateTime();
   const endDateTime = this.getEndDateTime();
 
@@ -317,20 +351,20 @@ TournamentSchema.virtual('currentStatus').get(function() {
     return this.status;
   }
 
-  const startDayjs = dayjs(startDateTime).utc();
-  const endDayjs = dayjs(endDateTime).utc();
+  const startLuxon = DateTime.fromJSDate(startDateTime).toUTC();
+  const endLuxon = DateTime.fromJSDate(endDateTime).toUTC();
 
   console.log(`Tournament ${this._id} status calculation:`);
-  console.log(`  Current time: ${now.format('YYYY-MM-DD HH:mm:ss')} UTC`);
-  console.log(`  Start time: ${startDayjs.format('YYYY-MM-DD HH:mm:ss')} UTC`);
-  console.log(`  End time: ${endDayjs.format('YYYY-MM-DD HH:mm:ss')} UTC`);
-  console.log(`  Minutes until start: ${startDayjs.diff(now, 'minute', true)}`);
-  console.log(`  Minutes until end: ${endDayjs.diff(now, 'minute', true)}`);
+  console.log(`  Current time: ${now.toFormat('yyyy-MM-dd HH:mm:ss')} UTC`);
+  console.log(`  Start time: ${startLuxon.toFormat('yyyy-MM-dd HH:mm:ss')} UTC`);
+  console.log(`  End time: ${endLuxon.toFormat('yyyy-MM-dd HH:mm:ss')} UTC`);
+  console.log(`  Minutes until start: ${startLuxon.diff(now, 'minutes').minutes}`);
+  console.log(`  Minutes until end: ${endLuxon.diff(now, 'minutes').minutes}`);
 
-  if (now.isBefore(startDayjs)) {
+  if (now < startLuxon) {
     console.log(`  Status: upcoming (current time is before start)`);
     return 'upcoming';
-  } else if (now.isBetween(startDayjs, endDayjs, null, '[]')) {
+  } else if (now >= startLuxon && now <= endLuxon) {
     console.log(`  Status: active (current time is between start and end)`);
     return 'active';
   } else {
@@ -351,14 +385,14 @@ TournamentSchema.methods.updateStatusBasedOnTime = function() {
       if (this.status !== calculatedStatus) {
         this.status = calculatedStatus;
         
-        const now = dayjs().utc().toDate();
+        const now = DateTime.utc().toJSDate();
         
         if (calculatedStatus === 'active' && previousStatus === 'upcoming' && !this.actualStartTime) {
           this.actualStartTime = now;
-          console.log(`Tournament ${this._id} started at ${dayjs(now).format('YYYY-MM-DD HH:mm:ss')} UTC`);
+          console.log(`Tournament ${this._id} started at ${DateTime.fromJSDate(now).toFormat('yyyy-MM-dd HH:mm:ss')} UTC`);
         } else if (calculatedStatus === 'completed' && previousStatus === 'active' && !this.actualEndTime) {
           this.actualEndTime = now;
-          console.log(`Tournament ${this._id} ended at ${dayjs(now).format('YYYY-MM-DD HH:mm:ss')} UTC`);
+          console.log(`Tournament ${this._id} ended at ${DateTime.fromJSDate(now).toFormat('yyyy-MM-dd HH:mm:ss')} UTC`);
         }
         
         console.log(`Tournament ${this._id} status updated from ${previousStatus} to ${calculatedStatus}`);
