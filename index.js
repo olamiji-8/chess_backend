@@ -47,7 +47,8 @@ const corsOptions = {
     'http://localhost:3000', 
     'https://sport64sqrs.vercel.app',
     'https://sport64sqrs-admin.vercel.app',
-    'https://64sqrs.live'
+    'https://64sqrs.live',
+    ' https://64sqrs-staging.vercel.app'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
