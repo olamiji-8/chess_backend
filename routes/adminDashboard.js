@@ -5,6 +5,11 @@ const { protect, adminOnly, protectAdminRoute } = require('../middleware/authMid
 const adminController = require('../controllers/adminDashboard');
 
 
+// // Then change your routes to:
+// router.get('/admin/deposits', protect, adminOnly, getAllDeposits);
+// router.get('/admin/deposits/:id', protect, adminOnly, getDepositById);
+
+
 
 // Admin user management routes
 router.post('/create-admin', adminController.createAdmin);
@@ -275,5 +280,13 @@ router.post('/tournaments/:tournamentId/payout', protect, adminOnly, adminContro
 
 // Get payout history for a tournament
 router.get('/tournaments/:tournamentId/payouts', protect, adminOnly, adminController.getTournamentPayouts);
+
+
+/**
+ * DEPOSIT MANAGEMENT ROUTES
+ */
+
+router.get('/admin/deposits', protect, adminOnly, adminController.getAllDeposits);
+router.get('/admin/deposits/:id', protect, adminOnly, adminController.getDepositById);
 
 module.exports = router;

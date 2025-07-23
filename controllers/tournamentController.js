@@ -436,7 +436,7 @@ const addRegistrationInfo = (tournament) => {
 // @access  Public
 exports.getTournament = asyncHandler(async (req, res) => {
   try {
-    console.log('Tournament ID:', req.params.id); // Debug log
+    console.log('Tournament ID:', req.params.id);
     
     // Validate MongoDB ObjectId format
     if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
@@ -457,18 +457,44 @@ exports.getTournament = asyncHandler(async (req, res) => {
       });
     }
     
-    // Update tournament status if needed (check if method exists)
+    // FIXED: Update tournament status and save to database
     if (typeof tournament.updateStatusBasedOnTime === 'function') {
-      tournament.updateStatusBasedOnTime();
+      const wasUpdated = tournament.updateStatusBasedOnTime();
+      
+      // Save the tournament if status was updated
+      if (wasUpdated) {
+        await tournament.save();
+        console.log(`Tournament ${tournament._id} status updated and saved to database`);
+      }
+    }
+    
+    // FIXED: Add detailed time information for debugging
+    const timeInfo = tournament.getTimeInfo();
+    if (timeInfo) {
+      console.log(`Tournament ${tournament._id} time information:`);
+      console.log(`  Start DateTime: ${timeInfo.startDateTimeFormatted}`);
+      console.log(`  End DateTime: ${timeInfo.endDateTimeFormatted}`);
+      console.log(`  Current Time: ${timeInfo.currentTimeFormatted}`);
+      console.log(`  Minutes until start: ${timeInfo.minutesUntilStart}`);
+      console.log(`  Minutes until end: ${timeInfo.minutesUntilEnd}`);
+      console.log(`  Current Status: ${tournament.currentStatus}`);
+      console.log(`  Database Status: ${tournament.status}`);
+      console.log(`  Original Start Time: ${timeInfo.originalStartTime}`);
+      console.log(`  Normalized Start Time: ${timeInfo.normalizedStartTime}`);
+      console.log(`  Timezone: ${timeInfo.timezone}`);
     }
     
     // Add registration info and links
     const tournamentData = addRegistrationInfo(tournament);
     
+    // FIXED: Add time info to response for frontend debugging
+    tournamentData.timeInfo = timeInfo;
+    
     res.status(200).json({
       success: true,
       data: tournamentData
     });
+    
   } catch (error) {
     console.error('Error fetching tournament:', error);
     res.status(500).json({
@@ -482,32 +508,101 @@ exports.getTournament = asyncHandler(async (req, res) => {
 // @desc    Get all tournaments
 // @route   GET /api/tournaments
 // @access  Public
+// exports.getTournaments = asyncHandler(async (req, res) => {
+//   try {
+//     // First, update all tournament statuses
+//     await updateAllTournamentStatuses();
+    
+//     const tournaments = await Tournament.find()
+//       .populate('organizer', 'fullName email phoneNumber')
+//       .populate('participants', 'fullName profilePic lichessUsername')
+//       .sort({ createdAt: -1 });
+    
+//     // Update status and add registration info for each tournament
+//     const tournamentsWithInfo = tournaments.map(tournament => {
+//       tournament.updateStatusBasedOnTime();
+//       return addRegistrationInfo(tournament);
+//     });
+    
+//     res.status(200).json({
+//       success: true,
+//       count: tournaments.length,
+//       data: tournamentsWithInfo
+//     });
+//   } catch (error) {
+//     console.error('Error in getTournaments:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: 'Error fetching tournaments',
+//       error: error.message
+//     });
+//   }
+// });
 exports.getTournaments = asyncHandler(async (req, res) => {
   try {
-    // First, update all tournament statuses
-    await updateAllTournamentStatuses();
+    const { tournamentId } = req.params;
+    const { status } = req.query; // Get status filter from query params
     
-    const tournaments = await Tournament.find()
-      .populate('organizer', 'fullName email phoneNumber')
-      .populate('participants', 'fullName profilePic lichessUsername')
-      .sort({ createdAt: -1 });
+    const tournament = await Tournament.findById(tournamentId)
+      .populate('participants', 'fullName email profilePic lichessUsername')
+      .populate('organizer', 'fullName email');
     
-    // Update status and add registration info for each tournament
-    const tournamentsWithInfo = tournaments.map(tournament => {
-      tournament.updateStatusBasedOnTime();
-      return addRegistrationInfo(tournament);
-    });
+    if (!tournament) {
+      return res.status(404).json({ message: 'Tournament not found' });
+    }
+    
+    // Check if user is the organizer
+    if (tournament.organizer._id.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'Only tournament organizer can view participants' });
+    }
+    
+    // Filter by status if provided
+    if (status && tournament.status !== status) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          tournament: {
+            id: tournament._id,
+            title: tournament.title,
+            status: tournament.status,
+            prizeType: tournament.prizeType,
+            prizeStructure: {}
+          },
+          participants: [],
+          totalParticipants: 0
+        }
+      });
+    }
+    
+    // Get prize structure for reference
+    const prizeStructure = {};
+    if (tournament.prizeType === 'fixed') {
+      prizeStructure.fixed = tournament.prizes.fixed;
+    } else if (tournament.prizeType === 'percentage') {
+      prizeStructure.percentage = tournament.prizes.percentage;
+    } else if (tournament.prizeType === 'special') {
+      prizeStructure.special = tournament.prizes.special;
+    }
     
     res.status(200).json({
       success: true,
-      count: tournaments.length,
-      data: tournamentsWithInfo
+      data: {
+        tournament: {
+          id: tournament._id,
+          title: tournament.title,
+          status: tournament.status,
+          prizeType: tournament.prizeType,
+          prizeStructure
+        },
+        participants: tournament.participants,
+        totalParticipants: tournament.participants.length
+      }
     });
+    
   } catch (error) {
-    console.error('Error in getTournaments:', error);
+    console.error('Error fetching tournament participants:', error);
     res.status(500).json({
-      success: false,
-      message: 'Error fetching tournaments',
+      message: 'Error fetching tournament participants',
       error: error.message
     });
   }
